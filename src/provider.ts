@@ -132,7 +132,10 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			console.log("[LiteLLM Model Provider] Config loaded", { baseUrl: config.baseUrl, hasApiKey: !!config.apiKey });
 
 			const { models } = await this.fetchModels(config.apiKey, config.baseUrl);
-			console.log("[LiteLLM Model Provider] Fetched models", { count: models.length, modelIds: models.map((m) => m.id) });
+			console.log("[LiteLLM Model Provider] Fetched models", {
+				count: models.length,
+				modelIds: models.map((m) => m.id),
+			});
 
 			const infos: LanguageModelChatInformation[] = models.map((m) => {
 				console.log(`[LiteLLM Model Provider] Processing model: ${m.id}`);
@@ -186,27 +189,26 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 			// Handle 403 Forbidden - API key issue
 			if (errorMessage.includes("403") || errorMessage.includes("Authorization failed")) {
-				vscode.window.showWarningMessage(
-					"Your LiteLLM API key is invalid or does not have permission to access models. " +
-					"The extension will use default models with limited functionality. " +
-					"Please reconfigure with a 'default' type API key to enable full features.",
-					"Reconfigure",
-					"Continue with Defaults"
-				).then((selection) => {
-					if (selection === "Reconfigure") {
-						vscode.commands.executeCommand("litellm.manage");
-					}
-				});
+				vscode.window
+					.showWarningMessage(
+						"Your LiteLLM API key is invalid or does not have permission to access models. " +
+							"The extension will use default models with limited functionality. " +
+							"Please reconfigure with a 'default' type API key to enable full features.",
+						"Reconfigure",
+						"Continue with Defaults"
+					)
+					.then((selection) => {
+						if (selection === "Reconfigure") {
+							vscode.commands.executeCommand("litellm.manage");
+						}
+					});
 				// Return empty array - caller will show no models available
 				return [];
 			}
 
 			// Handle 401 Unauthorized and other auth errors
 			if (errorMessage.includes("401") || errorMessage.includes("Authentication")) {
-				vscode.window.showErrorMessage(
-					"Authentication failed: " + errorMessage,
-					"Reconfigure"
-				).then((selection) => {
+				vscode.window.showErrorMessage("Authentication failed: " + errorMessage, "Reconfigure").then((selection) => {
 					if (selection === "Reconfigure") {
 						vscode.commands.executeCommand("litellm.manage");
 					}
@@ -216,14 +218,13 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 			// Handle connection errors
 			if (errorMessage.includes("Failed to connect")) {
-				vscode.window.showErrorMessage(
-					"Failed to connect to LiteLLM server: " + errorMessage,
-					"Reconfigure"
-				).then((selection) => {
-					if (selection === "Reconfigure") {
-						vscode.commands.executeCommand("litellm.manage");
-					}
-				});
+				vscode.window
+					.showErrorMessage("Failed to connect to LiteLLM server: " + errorMessage, "Reconfigure")
+					.then((selection) => {
+						if (selection === "Reconfigure") {
+							vscode.commands.executeCommand("litellm.manage");
+						}
+					});
 				return [];
 			}
 
@@ -522,8 +523,12 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				throw new Error("LiteLLM configuration not found. Please configure the LiteLLM provider.");
 			}
 
-			const openaiMessages = convertMessages(messages);
-			validateRequest(messages);
+			// For responses API, trim messages to prevent overwhelming the endpoint
+			// Keep first system message + last N user/assistant messages for context
+			let messagesToUse = messages;
+
+			const openaiMessages = convertMessages(messagesToUse);
+			validateRequest(messagesToUse);
 			const toolConfig = convertTools(options);
 
 			if (options.tools && options.tools.length > 128) {
@@ -551,11 +556,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			// Retrieve model info from cache
 			const modelInfo = this._modelInfoCache.get(model.id);
 
-			console.log(`[LiteLLM Model Provider] Model ID: ${model.id}, checking parameter support`);
-			console.log(
-				`[LiteLLM Model Provider] Model info supported_openai_params:`,
-				modelInfo?.supported_openai_params
-			);
+			console.log(`[LiteLLM Model Provider] Model info supported_openai_params:`, modelInfo?.supported_openai_params);
 
 			// Only include temperature if the model supports it
 			const tempSupported = this.isParameterSupported("temperature", modelInfo, model.id);
@@ -589,18 +590,19 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 			console.log(`[LiteLLM Model Provider] Request body before strip:`, JSON.stringify(requestBody));
 			// Final safety: strip any unsupported parameters that slipped through earlier checks
-			this.stripUnsupportedParametersFromRequest(
-				requestBody as Record<string, unknown>,
-				modelInfo,
-				model.id
-			);
+			this.stripUnsupportedParametersFromRequest(requestBody as Record<string, unknown>, modelInfo, model.id);
 			console.log(`[LiteLLM Model Provider] Request body after strip:`, JSON.stringify(requestBody));
 
 			if (toolConfig.tools) {
 				(requestBody as Record<string, unknown>).tools = toolConfig.tools;
+				console.log("[LiteLLM Model Provider] Added tools to request body:", {
+					toolCount: toolConfig.tools.length,
+					tools: JSON.stringify(toolConfig.tools, null, 2),
+				});
 			}
 			if (toolConfig.tool_choice) {
 				(requestBody as Record<string, unknown>).tool_choice = toolConfig.tool_choice;
+				console.log("[LiteLLM Model Provider] Added tool_choice to request body:", toolConfig.tool_choice);
 			}
 			const headers: Record<string, string> = {
 				"Content-Type": "application/json",
@@ -612,16 +614,31 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				headers["X-API-Key"] = config.apiKey;
 			}
 			const endpoint = this.getCompletionsEndpoint(modelInfo?.mode);
+
+			// Transform request body if using responses endpoint
+			let finalRequestBody: Record<string, unknown> = requestBody as Record<string, unknown>;
+			if (endpoint === "/responses") {
+				finalRequestBody = this.transformToResponsesFormat(finalRequestBody);
+			}
+
 			console.log("[LiteLLM Model Provider] Sending chat request", {
 				url: `${config.baseUrl}${endpoint}`,
 				modelId: model.id,
 				messageCount: messages.length,
-				requestBody: JSON.stringify(requestBody, null, 2),
+				endpoint: endpoint,
+				requestBody: JSON.stringify(finalRequestBody, null, 2),
 			});
-			const response = await fetch(`${config.baseUrl}${endpoint}`, {
+			const response = await this.fetchWithRetry(`${config.baseUrl}${endpoint}`, {
 				method: "POST",
 				headers,
-				body: JSON.stringify(requestBody),
+				body: JSON.stringify(finalRequestBody),
+			});
+
+			console.log("[LiteLLM Model Provider] Received response", {
+				status: response.status,
+				statusText: response.statusText,
+				contentType: response.headers.get("content-type"),
+				hasBody: !!response.body,
 			});
 
 			if (!response.ok) {
@@ -667,6 +684,33 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
 			});
 			throw err;
+		}
+	}
+
+	/**
+	 * Fetch with automatic retries for transient errors (500).
+	 */
+	private async fetchWithRetry(url: string, init: RequestInit, options?: { retries?: number; delayMs?: number }): Promise<Response> {
+		const maxRetries = options?.retries ?? 2;
+		const delayMs = options?.delayMs ?? 1000;
+		let attempt = 0;
+		while (true) {
+			try {
+				const response = await fetch(url, init);
+				if (response.ok || attempt >= maxRetries || response.status < 500 || response.status >= 600) {
+					return response;
+				}
+				attempt++;
+				console.warn(`[LiteLLM Model Provider] Retryable response (status ${response.status}). Attempt ${attempt}/${maxRetries}`);
+				await new Promise((resolve) => setTimeout(resolve, delayMs));
+			} catch (err) {
+				if (attempt >= maxRetries) {
+					throw err;
+				}
+				attempt++;
+				console.warn("[LiteLLM Model Provider] Fetch failed, retrying", { attempt, error: err });
+				await new Promise((resolve) => setTimeout(resolve, delayMs));
+			}
 		}
 	}
 
@@ -843,6 +887,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			while (!token.isCancellationRequested) {
 				const { done, value } = await reader.read();
 				if (done) {
+					console.log("[LiteLLM Model Provider] Stream ended");
 					break;
 				}
 
@@ -851,11 +896,17 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				buffer = lines.pop() || "";
 
 				for (const line of lines) {
+					// Log non-empty lines for debugging
+					if (line.length > 0) {
+						console.log("[LiteLLM Model Provider] Received line:", line.slice(0, 200));
+					}
+
 					if (!line.startsWith("data: ")) {
 						continue;
 					}
 					const data = line.slice(6);
 					if (data === "[DONE]") {
+						console.log("[LiteLLM Model Provider] Received [DONE] marker");
 						// Do not throw on [DONE]; any incomplete/empty buffers are ignored.
 						await this.flushToolCallBuffers(progress, /*throwOnInvalid*/ false);
 						// Flush any in-progress text-embedded tool call (silent if incomplete)
@@ -865,9 +916,14 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 					try {
 						const parsed = JSON.parse(data);
+						console.log("[LiteLLM Model Provider] Parsed JSON successfully");
 						await this.processDelta(parsed, progress);
-					} catch {
-						// Silently ignore malformed SSE lines temporarily
+					} catch (e) {
+						// Log parsing errors
+						console.warn("[LiteLLM Model Provider] Failed to parse JSON:", {
+							data: data.slice(0, 200),
+							error: e instanceof Error ? e.message : String(e),
+						});
 					}
 				}
 			}
@@ -886,6 +942,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 	/**
 	 * Handle a single streamed delta chunk, emitting text and tool call parts.
+	 * Supports both /chat/completions format (with choices) and /responses format (with output).
 	 * @param delta Parsed SSE chunk from LiteLLM.
 	 * @param progress Progress reporter for parts.
 	 */
@@ -894,8 +951,160 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		progress: vscode.Progress<vscode.LanguageModelResponsePart>
 	): Promise<boolean> {
 		let emitted = false;
-		const choice = (delta.choices as Record<string, unknown>[] | undefined)?.[0];
+
+		// Handle OpenAI Responses API format (event-based streaming)
+		// Each delta has a "type" field indicating what kind of event it is
+		const eventType = delta.type as string | undefined;
+
+		// Log all event types for debugging
+		if (eventType && !eventType.startsWith("response.in_progress") && eventType !== "response.created") {
+			console.log("[LiteLLM Model Provider] Received event type:", {
+				eventType,
+				deltaKeys: Object.keys(delta),
+				deltaPreview: JSON.stringify(delta).slice(0, 200),
+			});
+		}
+
+		if (eventType === "response.output_text.delta") {
+			// Text delta from responses API - has "delta" field with text chunk
+			const textDelta = delta.delta as string | undefined;
+			if (textDelta) {
+				console.log("[LiteLLM Model Provider] Processing text delta:", textDelta.slice(0, 50));
+				progress.report(new vscode.LanguageModelTextPart(textDelta));
+				return true;
+			}
+			return false;
+		}
+
+		if (eventType === "response.output_text.done") {
+			// Complete text message - has "text" field with full message
+			// We don't need to emit here since we already streamed the deltas
+			console.log("[LiteLLM Model Provider] Text output complete");
+			return false;
+		}
+
+		// Handle function call arguments completion from responses API
+		if (eventType === "response.function_call_arguments.done") {
+			// This event has the complete function call with all arguments assembled
+			const argumentsStr = delta.arguments as string | undefined;
+			const itemId = delta.item_id as string | undefined;
+
+			if (argumentsStr && itemId) {
+				try {
+					console.log("[LiteLLM Model Provider] Processing function call arguments.done:", {
+						itemId,
+						argumentsPreview: argumentsStr.slice(0, 100),
+					});
+
+					const parsed = tryParseJSONObject(argumentsStr);
+					if (!parsed.ok) {
+						console.warn("[LiteLLM Model Provider] Failed to parse function arguments:", argumentsStr);
+						return false;
+					}
+
+					// At this point we have the arguments but not the function name
+					// The name should have come from the response.output_item.added event
+					// For now, we'll need to track it separately or get it from another source
+					console.log("[LiteLLM Model Provider] Have arguments for function call:", {
+						itemId,
+						arguments: parsed.value,
+					});
+					return false; // We'll emit when we have the name
+				} catch (e) {
+					console.warn("[LiteLLM Model Provider] Error processing function call arguments:", e);
+					return false;
+				}
+			}
+			return false;
+		}
+
+		// Handle function call item completion
+		if (eventType === "response.output_item.done") {
+			// This tells us the function call is complete
+			const item = delta.item as Record<string, unknown> | undefined;
+
+			if (item && item.type === "function_call") {
+				const callId = item.call_id as string | undefined;
+				const argumentsStr = item.arguments as string | undefined;
+				const name = item.name as string | undefined;
+
+				console.log("[LiteLLM Model Provider] Function call output_item.done:", {
+					callId,
+					name,
+					hasArguments: !!argumentsStr,
+					argumentsPreview: argumentsStr ? String(argumentsStr).slice(0, 100) : undefined,
+				});
+
+				if (callId && argumentsStr) {
+					try {
+						const parsed = tryParseJSONObject(argumentsStr);
+						if (!parsed.ok) {
+							console.warn("[LiteLLM Model Provider] Failed to parse function arguments:", argumentsStr);
+							return false;
+						}
+
+						// Use the item_id as call_id if name is not available
+						// The function name might be embedded in the arguments
+						const toolName = name || "unknown_tool";
+
+						console.log("[LiteLLM Model Provider] Emitting tool call:", {
+							callId,
+							name: toolName,
+							argumentsKeys: Object.keys(parsed.value),
+						});
+
+						progress.report(new vscode.LanguageModelToolCallPart(callId, toolName, parsed.value));
+						return true;
+					} catch (e) {
+						console.warn("[LiteLLM Model Provider] Error processing function call:", e);
+						return false;
+					}
+				}
+			}
+			return false;
+		}
+
+		// Handle function call items being added (with partial data)
+		if (eventType === "response.output_item.added") {
+			const item = delta.item as Record<string, unknown> | undefined;
+
+			if (item && item.type === "function_call") {
+				const callId = item.call_id as string | undefined;
+				const name = item.name as string | undefined;
+
+				console.log("[LiteLLM Model Provider] Function call output_item.added:", {
+					callId,
+					name,
+					status: item.status,
+				});
+			}
+			return false; // Wait for output_item.done or arguments.done
+		}
+
+		// Handle /chat/completions format (choices array)
+		let choice = (delta.choices as Record<string, unknown>[] | undefined)?.[0];
+
+		// Handle /responses format (output array) - legacy support
 		if (!choice) {
+			const output = (delta.output as Record<string, unknown>[] | undefined)?.[0];
+			if (output) {
+				// Convert responses format to choices-like format for compatibility
+				const content = output.content as Record<string, unknown>[] | undefined;
+				if (content && content.length > 0) {
+					// Extract text content from responses format
+					const textContent = content.find((c) => (c as Record<string, unknown>).type === "output_text");
+					if (textContent) {
+						choice = {
+							delta: { content: (textContent as Record<string, unknown>).text },
+							finish_reason: output.finish_reason,
+						};
+					}
+				}
+			}
+		}
+
+		if (!choice) {
+			// Not a recognized format, skip
 			return false;
 		}
 
@@ -1253,5 +1462,478 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		} catch {
 			return text;
 		}
+	}
+
+	/**
+	 * Transform a chat/completions request body to the responses API format.
+	 * The responses API uses "input" (array format) instead of "messages".
+	 * Tools use the SAME standard OpenAI format as chat/completions.
+	 * @param requestBody The original chat/completions request body
+	 * @returns Transformed request body for the responses endpoint
+	 */
+	private transformToResponsesFormat(requestBody: Record<string, unknown>): Record<string, unknown> {
+		const messages = requestBody.messages as Record<string, unknown>[] | undefined;
+		if (!messages || messages.length === 0) {
+			throw new Error("Cannot transform empty messages to responses format");
+		}
+
+		// Log input message structure for diagnostics
+		console.log("[LiteLLM Model Provider] transformToResponsesFormat input:", {
+			messageCount: messages.length,
+			messageRoles: messages.map((m) => m.role),
+			messageContentLengths: messages.map((m) => {
+				const content = m.content as unknown;
+				if (typeof content === "string") return `string:${content.length}`;
+				if (Array.isArray(content)) return `array:${content.length}`;
+				return "other";
+			}),
+		});
+
+		// Transform messages to the input array format for responses API
+		// Extract system message separately as "instructions"
+		const inputArray: Array<Record<string, unknown>> = [];
+		let instructions: string | undefined;
+
+		// Track which tool calls we've added so we can properly pair with outputs
+		const addedToolCalls = new Set<string>();
+
+		// First pass: collect all tool call IDs from assistant messages
+		// so we know which ones we have before processing tool outputs
+		const allToolCallIds = new Set<string>();
+		const toolCallIdMap = new Map<string, string>(); // Map of original IDs to normalized IDs
+
+		for (const msg of messages) {
+			const role = msg.role as string;
+			if (role === "assistant") {
+				// Tool calls are in the tool_calls field, not in content
+				const toolCalls = msg.tool_calls as Array<Record<string, unknown>> | undefined;
+				if (toolCalls && Array.isArray(toolCalls)) {
+					for (const tc of toolCalls) {
+						let id = tc.id as string | undefined;
+						if (id) {
+							allToolCallIds.add(id);
+
+							// Normalize the ID for matching purposes
+							let normalizedId = id;
+							if (!normalizedId.startsWith("fc_")) {
+								normalizedId = `fc_${normalizedId}`;
+							}
+							toolCallIdMap.set(id, normalizedId);
+							toolCallIdMap.set(normalizedId, normalizedId);
+
+							console.log("[LiteLLM Model Provider] Found tool call ID from tool_calls field:", {
+								original: id,
+								normalized: normalizedId,
+							});
+						}
+					}
+				}
+
+				// Also check content array for any tool_call parts (for compatibility)
+				const content = msg.content as Array<Record<string, unknown>> | string | undefined;
+				if (Array.isArray(content)) {
+					for (const part of content) {
+						if (part && typeof part === "object" && (part as Record<string, unknown>).type === "tool_call") {
+							let callId = (part as Record<string, unknown>).callId as string;
+							if (callId) {
+								allToolCallIds.add(callId);
+
+								// Normalize the ID
+								let normalizedId = callId;
+								if (!normalizedId.startsWith("fc_")) {
+									normalizedId = `fc_${normalizedId}`;
+								}
+								toolCallIdMap.set(callId, normalizedId);
+								toolCallIdMap.set(normalizedId, normalizedId);
+
+								console.log("[LiteLLM Model Provider] Found tool call ID from content array:", {
+									original: callId,
+									normalized: normalizedId,
+								});
+							}
+						}
+					}
+				}
+			}
+		}
+
+		console.log("[LiteLLM Model Provider] Found tool call IDs in messages:", {
+			count: allToolCallIds.size,
+			ids: Array.from(allToolCallIds),
+			normalizedMap: Array.from(toolCallIdMap.entries()),
+		});
+
+		// Second pass: transform messages to input format
+		for (const msg of messages) {
+			const role = msg.role as string;
+			const content = msg.content as Array<Record<string, unknown>> | string | undefined;
+
+			if (role === "system") {
+				// System message becomes "instructions" parameter (NOT in input array)
+				if (typeof content === "string") {
+					instructions = content;
+				}
+			} else if (role === "user") {
+				// User messages in input array
+				if (typeof content === "string") {
+					inputArray.push({
+						type: "message",
+						role: "user",
+						content: [
+							{
+								type: "input_text",
+								text: content,
+							},
+						],
+					});
+				}
+			} else if (role === "assistant") {
+				// Assistant messages can contain text and/or tool calls
+				const assistantContent: Array<Record<string, unknown>> = [];
+				let hasToolCalls = false;
+
+				// Handle tool_calls field (from OpenAI format)
+				const toolCallsField = msg.tool_calls as Array<Record<string, unknown>> | undefined;
+				if (toolCallsField && Array.isArray(toolCallsField)) {
+					for (const toolCall of toolCallsField) {
+						hasToolCalls = true;
+						let toolCallId = toolCall.id as string;
+						const toolFunction = toolCall.function as Record<string, unknown> | undefined;
+						const toolName = toolFunction?.name as string | undefined;
+						const toolArgs = toolFunction?.arguments as unknown;
+
+						// Use normalized ID from the map, or generate normalized version
+						let normalizedId = toolCallIdMap.get(toolCallId);
+						if (!normalizedId) {
+							// If not in map, normalize it now
+							if (!toolCallId.startsWith("fc_")) {
+								normalizedId = `fc_${toolCallId}`;
+							} else {
+								normalizedId = toolCallId;
+							}
+							toolCallIdMap.set(toolCallId, normalizedId);
+						}
+
+						console.log("[LiteLLM Model Provider] Adding function_call from tool_calls field:", {
+							originalId: toolCallId,
+							normalizedId: normalizedId,
+							name: toolName,
+							argumentsPreview: typeof toolArgs === "string" ? toolArgs.slice(0, 50) : JSON.stringify(toolArgs || {}).slice(0, 50),
+						});
+
+						// Add tool call in responses API format with normalized ID
+						const functionCall = {
+							type: "function_call",
+							id: normalizedId,
+							call_id: normalizedId,
+							name: toolName,
+							arguments: typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs || {}),
+						};
+						inputArray.push(functionCall);
+						addedToolCalls.add(normalizedId);
+					}
+				}
+
+				if (Array.isArray(content)) {
+					// Content is an array of parts (text, tool calls, etc)
+					for (const part of content) {
+						if (!part || typeof part !== "object") continue;
+
+						const partType = (part as Record<string, unknown>).type as string;
+
+						if (partType === "text") {
+							// Text part
+							assistantContent.push({
+								type: "output_text",
+								text: (part as Record<string, unknown>).value,
+							});
+						} else if (partType === "tool_call") {
+							// Tool call part - need to convert to responses API format
+							hasToolCalls = true;
+							let toolCallId = (part as Record<string, unknown>).callId as string;
+							const toolName = (part as Record<string, unknown>).name as string;
+							const toolArgs = (part as Record<string, unknown>).arguments as unknown;
+
+							// Use normalized ID from the map, or generate normalized version
+							let normalizedId = toolCallIdMap.get(toolCallId);
+							if (!normalizedId) {
+								// If not in map, normalize it now
+								if (!toolCallId.startsWith("fc_")) {
+									normalizedId = `fc_${toolCallId}`;
+								} else {
+									normalizedId = toolCallId;
+								}
+								toolCallIdMap.set(toolCallId, normalizedId);
+							}
+
+							// Add tool call in responses API format with normalized ID
+							const functionCall = {
+								type: "function_call",
+								id: normalizedId,
+								call_id: normalizedId,
+								name: toolName,
+								arguments: typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs),
+							};
+							inputArray.push(functionCall);
+							addedToolCalls.add(normalizedId);
+
+							console.log("[LiteLLM Model Provider] Added function_call from content array:", {
+								originalId: toolCallId,
+								normalizedId: normalizedId,
+								name: toolName,
+								argumentsPreview: typeof toolArgs === "string" ? toolArgs.slice(0, 50) : JSON.stringify(toolArgs).slice(0, 50),
+							});
+						}
+					}
+				} else if (typeof content === "string") {
+					// Simple string content
+					assistantContent.push({
+						type: "output_text",
+						text: content,
+					});
+				}
+
+				// Only add message if it has content (not just tool calls)
+				if (assistantContent.length > 0) {
+					inputArray.push({
+						type: "message",
+						role: "assistant",
+						content: assistantContent,
+					});
+				} else if (hasToolCalls) {
+					// If only tool calls and no text, still add a message for context
+					inputArray.push({
+						type: "message",
+						role: "assistant",
+						content: [
+							{
+								type: "output_text",
+								text: "",
+							},
+						],
+					});
+				}
+			} else if (role === "tool") {
+				// Tool result messages
+				// The Responses API REQUIRES that a function_call exists before its output
+				let toolCallId = msg.tool_call_id as string | undefined;
+				const toolContent = typeof content === "string" ? content : JSON.stringify(content);
+
+				if (toolCallId) {
+					// Look up the normalized ID from the map
+					let matchingId = toolCallIdMap.get(toolCallId);
+
+					// If not in map, try to match by normalizing
+					if (!matchingId) {
+						if (!toolCallId.startsWith("fc_")) {
+							matchingId = `fc_${toolCallId}`;
+						} else {
+							matchingId = toolCallId;
+						}
+					}
+
+					const matchFound = addedToolCalls.has(matchingId);
+
+					console.log("[LiteLLM Model Provider] Processing tool result:", {
+						originalCallId: toolCallId,
+						normalizedMatchingId: matchingId,
+						matchFound,
+						inAddedToolCalls: matchFound,
+						addedToolCallsSize: addedToolCalls.size,
+						allToolCallIdsSize: allToolCallIds.size,
+						outputPreview: typeof toolContent === "string" ? toolContent.slice(0, 100) : String(toolContent).slice(0, 100),
+						addedToolCallsList: Array.from(addedToolCalls),
+					});
+
+					// CRITICAL: Only add function_call_output if we have the matching function_call
+					// If the tool call is from a previous response, we skip it to avoid the API error
+					if (addedToolCalls.has(matchingId)) {
+						// We have the matching function_call in this request
+						inputArray.push({
+							type: "function_call_output",
+							call_id: matchingId,
+							output: toolContent,
+						});
+
+						console.log("[LiteLLM Model Provider] Added function_call_output to input:", {
+							callId: toolCallId,
+							matchingId: matchingId,
+							outputPreview: typeof toolContent === "string" ? toolContent.slice(0, 50) : toolContent,
+						});
+					} else if (allToolCallIds.has(matchingId)) {
+						// Tool call from a previous response - skip the output
+						// The Responses API doesn't have the context of the previous call
+						console.log(
+							"[LiteLLM Model Provider] Skipping function_call_output for tool call from previous response:",
+							matchingId
+						);
+					} else {
+						// Tool call ID not found anywhere
+						console.warn(
+							"[LiteLLM Model Provider] Tool result for completely unknown tool call - skipping:",
+							toolCallId
+						);
+					}
+				}
+			}
+		}
+
+		// Build the responses format request body
+		const responsesBody: Record<string, unknown> = {
+			model: requestBody.model,
+			input:
+				inputArray.length === 1 && inputArray[0].role === "user"
+					? (inputArray[0].content as Array<Record<string, unknown>>)[0].text
+					: inputArray,
+			stream: requestBody.stream,
+		};
+
+		// Add instructions if we extracted a system message
+		if (instructions) {
+			responsesBody.instructions = instructions;
+		}
+
+		// Map max_tokens to max_tokens in responses format (same parameter name)
+		if (typeof requestBody.max_tokens === "number") {
+			responsesBody.max_tokens = requestBody.max_tokens;
+		}
+
+		// Add temperature if present
+		if (typeof requestBody.temperature === "number") {
+			responsesBody.temperature = requestBody.temperature;
+		}
+
+		// Add top_p if present
+		if (typeof requestBody.top_p === "number") {
+			responsesBody.top_p = requestBody.top_p;
+		}
+
+		// Add frequency_penalty if present
+		if (typeof requestBody.frequency_penalty === "number") {
+			responsesBody.frequency_penalty = requestBody.frequency_penalty;
+		}
+
+		// Add presence_penalty if present
+		if (typeof requestBody.presence_penalty === "number") {
+			responsesBody.presence_penalty = requestBody.presence_penalty;
+		}
+
+		// Add stop sequences if present
+		if (requestBody.stop) {
+			responsesBody.stop = requestBody.stop;
+		}
+
+		// Add tools if present
+		// LiteLLM's /responses endpoint expects tools in a flattened format with top-level name field
+		// Original format (OpenAI): { type: "function", function: { name, description, parameters } }
+		// LiteLLM responses format: { type: "function", name, description, parameters }
+		if (requestBody.tools) {
+			const tools = requestBody.tools as Array<Record<string, unknown>>;
+
+			// Transform and validate tools for LiteLLM's responses endpoint
+			const transformedTools = tools
+				.map((tool) => {
+					if (!tool || typeof tool !== "object") {
+						console.warn("[LiteLLM Model Provider] Skipping non-object tool");
+						return null;
+					}
+
+					// Extract function details from nested structure
+					const func = tool.function as Record<string, unknown> | undefined;
+					if (!func) {
+						console.warn("[LiteLLM Model Provider] Tool missing function field:", tool);
+						return null;
+					}
+
+					const name = func.name as string | undefined;
+					const description = func.description as string | undefined;
+					const parameters = func.parameters as object | undefined;
+
+					// Validate required fields
+					if (!name || typeof name !== "string" || name.length === 0) {
+						console.warn("[LiteLLM Model Provider] Tool missing valid name:", { tool: JSON.stringify(tool) });
+						return null;
+					}
+
+					if (!description || typeof description !== "string") {
+						console.warn("[LiteLLM Model Provider] Tool missing valid description:", { name });
+						return null;
+					}
+
+					if (!parameters || typeof parameters !== "object") {
+						console.warn("[LiteLLM Model Provider] Tool missing valid parameters:", { name });
+						return null;
+					}
+
+					// Return flattened tool structure for LiteLLM's responses endpoint
+					return {
+						type: "function",
+						name: name,
+						description: description,
+						parameters: parameters,
+					};
+				})
+				.filter(
+					(tool): tool is { type: string; name: string; description: string; parameters: object } => tool !== null
+				);
+
+			if (transformedTools.length > 0) {
+				responsesBody.tools = transformedTools;
+				const firstTool = transformedTools[0] as Record<string, unknown> | undefined;
+				console.log("[LiteLLM Model Provider] Transformed tools for responses endpoint:", {
+					toolCount: transformedTools.length,
+					toolNames: transformedTools.map((t) => (t as Record<string, unknown>).name),
+					sampleTool: firstTool ? JSON.stringify(firstTool, null, 2) : "no tools",
+				});
+			} else if (tools.length > 0) {
+				console.warn("[LiteLLM Model Provider] No valid tools to include in responses request", {
+					totalTools: tools.length,
+					invalidReasons: "Missing type, name, description, or parameters",
+				});
+			}
+		}
+
+		// Add tool_choice if present and if we have tools
+		// The /responses endpoint uses the same tool_choice format as /chat/completions
+		if (requestBody.tool_choice && responsesBody.tools) {
+			responsesBody.tool_choice = requestBody.tool_choice;
+			console.log("[LiteLLM Model Provider] Added tool_choice:", requestBody.tool_choice);
+		}
+
+		// Log the final input array structure for debugging tool call sequences
+		if (Array.isArray(responsesBody.input)) {
+			const inputArray = responsesBody.input as Array<Record<string, unknown>>;
+			const inputSizeEstimate = JSON.stringify(responsesBody.input).length;
+
+			console.log("[LiteLLM Model Provider] Input array structure:", {
+				length: inputArray.length,
+				estimatedSizeBytes: inputSizeEstimate,
+				estimatedSizeMB: (inputSizeEstimate / 1024 / 1024).toFixed(2),
+				types: inputArray.map((item) => item.type),
+				callIds: inputArray
+					.filter((item) => item.type === "function_call" || item.type === "function_call_output")
+					.map((item) => item.call_id || item.id),
+			});
+
+			// Warn if input is getting very large (>5MB)
+			if (inputSizeEstimate > 5 * 1024 * 1024) {
+				console.warn("[LiteLLM Model Provider] WARNING: Input array is very large!", {
+					sizeBytes: inputSizeEstimate,
+					sizeMB: (inputSizeEstimate / 1024 / 1024).toFixed(2),
+					itemCount: inputArray.length,
+					recommendation: "Consider reducing message history or message content size",
+				});
+			}
+		}
+
+		console.log("[LiteLLM Model Provider] Transformed request to responses format", {
+			originalMessageCount: (requestBody.messages as Array<unknown>)?.length ?? 0,
+			transformedInputLength: Array.isArray(responsesBody.input) ? (responsesBody.input as Array<unknown>).length : "string",
+			hasTools: !!responsesBody.tools,
+			inputType: typeof responsesBody.input,
+			hasInstructions: !!responsesBody.instructions,
+		});
+
+		return responsesBody;
 	}
 }

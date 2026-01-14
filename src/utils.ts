@@ -1,5 +1,11 @@
 import * as vscode from "vscode";
-import type { OpenAIChatMessage, OpenAIChatRole, OpenAIFunctionToolDef, OpenAIToolCall, OpenAIChatMessageContentItem } from "./types";
+import type {
+	OpenAIChatMessage,
+	OpenAIChatRole,
+	OpenAIFunctionToolDef,
+	OpenAIToolCall,
+	OpenAIChatMessageContentItem,
+} from "./types";
 
 // Tool calling sanitization helpers
 
@@ -218,7 +224,10 @@ export function convertMessages(messages: readonly vscode.LanguageModelChatReque
  * If there are content items (images), return an array format.
  * Otherwise, return a simple string.
  */
-function buildMessageContent(textParts: string[], contentItems: OpenAIChatMessageContentItem[]): string | OpenAIChatMessageContentItem[] | undefined {
+function buildMessageContent(
+	textParts: string[],
+	contentItems: OpenAIChatMessageContentItem[]
+): string | OpenAIChatMessageContentItem[] | undefined {
 	const text = textParts.join("");
 
 	if (contentItems.length === 0) {
