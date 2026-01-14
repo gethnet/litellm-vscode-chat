@@ -71,6 +71,9 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 	private _emittedTextToolCallKeys = new Set<string>();
 	private _emittedTextToolCallIds = new Set<string>();
 
+	/** Cache of model information by model ID for use during chat requests */
+	private _modelInfoCache: Map<string, LiteLLMModelInfo | undefined> = new Map<string, LiteLLMModelInfo | undefined>();
+
 	/**
 	 * Create a provider using the given secret storage for the API key.
 	 * @param secrets VS Code secret storage.
@@ -120,56 +123,114 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 	): Promise<LanguageModelChatInformation[]> {
 		console.log("[LiteLLM Model Provider] prepareLanguageModelChatInformation called", { silent: options.silent });
 
-		const config = await this.ensureConfig(options.silent);
-		if (!config) {
-			console.log("[LiteLLM Model Provider] No config found, returning empty array");
-			return [];
-		}
-		console.log("[LiteLLM Model Provider] Config loaded", { baseUrl: config.baseUrl, hasApiKey: !!config.apiKey });
+		try {
+			const config = await this.ensureConfig(options.silent);
+			if (!config) {
+				console.log("[LiteLLM Model Provider] No config found, returning empty array");
+				return [];
+			}
+			console.log("[LiteLLM Model Provider] Config loaded", { baseUrl: config.baseUrl, hasApiKey: !!config.apiKey });
 
-		const { models } = await this.fetchModels(config.apiKey, config.baseUrl);
-		console.log("[LiteLLM Model Provider] Fetched models", { count: models.length, modelIds: models.map((m) => m.id) });
+			const { models } = await this.fetchModels(config.apiKey, config.baseUrl);
+			console.log("[LiteLLM Model Provider] Fetched models", { count: models.length, modelIds: models.map((m) => m.id) });
 
-		const infos: LanguageModelChatInformation[] = models.map((m) => {
-			console.log(`[LiteLLM Model Provider] Processing model: ${m.id}`);
-			const modelInfo = m.model_info;
+			const infos: LanguageModelChatInformation[] = models.map((m) => {
+				console.log(`[LiteLLM Model Provider] Processing model: ${m.id}`);
+				const modelInfo = m.model_info;
 
-			// Extract token constraints from model_info
-			const maxInputTokens = modelInfo?.max_input_tokens ?? DEFAULT_CONTEXT_LENGTH;
-			const maxOutputTokens = modelInfo?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+				// Cache the model info for later use during chat requests
+				this._modelInfoCache.set(m.id, modelInfo);
 
-			// Build capabilities based on model_info flags
-			const capabilities = this.buildCapabilities(modelInfo);
+				// Extract token constraints from model_info
+				const maxInputTokens = modelInfo?.max_input_tokens ?? DEFAULT_CONTEXT_LENGTH;
+				const maxOutputTokens = modelInfo?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 
-			console.log(`[LiteLLM Model Provider]   - model_info:`, {
-				maxInputTokens,
-				maxOutputTokens,
-				capabilities,
+				// Build capabilities based on model_info flags
+				const capabilities = this.buildCapabilities(modelInfo);
+
+				console.log(`[LiteLLM Model Provider]   - model_info:`, {
+					maxInputTokens,
+					maxOutputTokens,
+					capabilities,
+				});
+
+				return {
+					id: m.id,
+					name: m.model_name ?? m.id,
+					tooltip: `${m.model_info?.litellm_provider ?? "LiteLLM"} (${m.model_info?.mode ?? "responses"})`,
+					family: "litellm",
+					version: "1.0.0",
+					maxInputTokens: Math.max(1, maxInputTokens),
+					maxOutputTokens: Math.max(1, maxOutputTokens),
+					capabilities,
+				} satisfies LanguageModelChatInformation;
 			});
 
-			return {
-				id: m.id,
-				name: m.model_name ?? m.id,
-				tooltip: `${m.model_info?.litellm_provider ?? "LiteLLM"} (${m.model_info?.mode ?? "responses"})`,
-				family: "litellm",
-				version: "1.0.0",
-				maxInputTokens: Math.max(1, maxInputTokens),
-				maxOutputTokens: Math.max(1, maxOutputTokens),
-				capabilities,
-			} satisfies LanguageModelChatInformation;
-		});
+			this._chatEndpoints = infos.map((info) => ({
+				model: info.id,
+				modelMaxPromptTokens: info.maxInputTokens + info.maxOutputTokens,
+			}));
 
-		this._chatEndpoints = infos.map((info) => ({
-			model: info.id,
-			modelMaxPromptTokens: info.maxInputTokens + info.maxOutputTokens,
-		}));
+			console.log("[LiteLLM Model Provider] Final model count:", infos.length);
+			console.log(
+				"[LiteLLM Model Provider] Model IDs:",
+				infos.map((i) => i.id)
+			);
+			return infos;
+		} catch (err) {
+			console.error("[LiteLLM Model Provider] prepareLanguageModelChatInformation failed", {
+				error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : String(err),
+			});
 
-		console.log("[LiteLLM Model Provider] Final model count:", infos.length);
-		console.log(
-			"[LiteLLM Model Provider] Model IDs:",
-			infos.map((i) => i.id)
-		);
-		return infos;
+			const errorMessage = err instanceof Error ? err.message : String(err);
+
+			// Handle 403 Forbidden - API key issue
+			if (errorMessage.includes("403") || errorMessage.includes("Authorization failed")) {
+				vscode.window.showWarningMessage(
+					"Your LiteLLM API key is invalid or does not have permission to access models. " +
+					"The extension will use default models with limited functionality. " +
+					"Please reconfigure with a 'default' type API key to enable full features.",
+					"Reconfigure",
+					"Continue with Defaults"
+				).then((selection) => {
+					if (selection === "Reconfigure") {
+						vscode.commands.executeCommand("litellm.manage");
+					}
+				});
+				// Return empty array - caller will show no models available
+				return [];
+			}
+
+			// Handle 401 Unauthorized and other auth errors
+			if (errorMessage.includes("401") || errorMessage.includes("Authentication")) {
+				vscode.window.showErrorMessage(
+					"Authentication failed: " + errorMessage,
+					"Reconfigure"
+				).then((selection) => {
+					if (selection === "Reconfigure") {
+						vscode.commands.executeCommand("litellm.manage");
+					}
+				});
+				return [];
+			}
+
+			// Handle connection errors
+			if (errorMessage.includes("Failed to connect")) {
+				vscode.window.showErrorMessage(
+					"Failed to connect to LiteLLM server: " + errorMessage,
+					"Reconfigure"
+				).then((selection) => {
+					if (selection === "Reconfigure") {
+						vscode.commands.executeCommand("litellm.manage");
+					}
+				});
+				return [];
+			}
+
+			// Generic error
+			console.error("[LiteLLM Model Provider] Unexpected error:", errorMessage);
+			return [];
+		}
 	}
 
 	/**
@@ -323,7 +384,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 	 */
 	private async fetchModels(apiKey: string, baseUrl: string): Promise<{ models: TransformedModelItem[] }> {
 		console.log("[LiteLLM Model Provider] fetchModels called", { baseUrl, hasApiKey: !!apiKey });
-		const modelsList = (async () => {
+		try {
 			const headers: Record<string, string> = { "User-Agent": this.userAgent };
 			if (apiKey) {
 				// Try both authentication methods: standard Bearer and X-API-Key
@@ -332,10 +393,19 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			}
 
 			console.log("[LiteLLM Model Provider] Fetching from:", `${baseUrl}/model/info`);
-			const resp = await fetch(`${baseUrl}/model/info`, {
-				method: "GET",
-				headers,
-			});
+			let resp: Response;
+			try {
+				resp = await fetch(`${baseUrl}/model/info`, {
+					method: "GET",
+					headers,
+				});
+			} catch (fetchError) {
+				console.error("[LiteLLM Model Provider] Fetch error:", fetchError);
+				throw new Error(
+					`Failed to connect to LiteLLM server at ${baseUrl}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`
+				);
+			}
+
 			console.log("[LiteLLM Model Provider] Response status:", resp.status, resp.statusText);
 			if (!resp.ok) {
 				let text = "";
@@ -345,12 +415,20 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 					console.error("[LiteLLM Model Provider] Failed to read response text", error);
 				}
 
-				// Provide helpful error message for authentication failures
+				// Provide helpful error message for authentication/authorization failures
 				if (resp.status === 401) {
 					const err = new Error(
-						`Authentication failed: Your LiteLLM server requires an API key. Please run the "Manage LiteLLM Provider" command to configure your API key.`
+						`Authentication failed (401): Your LiteLLM server requires a valid API key. Please run the "Manage LiteLLM Provider" command to update your API key.`
 					);
 					console.error("[LiteLLM Model Provider] Authentication error", err);
+					throw err;
+				}
+
+				if (resp.status === 403) {
+					const err = new Error(
+						`Authorization failed (403): Your API key is invalid or does not have permission to access models. Please run the "Manage LiteLLM Provider" command to update your API key.`
+					);
+					console.error("[LiteLLM Model Provider] Authorization error", err);
 					throw err;
 				}
 
@@ -360,7 +438,17 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				console.error("[LiteLLM Model Provider] Failed to fetch LiteLLM models", err);
 				throw err;
 			}
-			const parsed = (await resp.json()) as LiteLLMModelInfoResponse;
+
+			let parsed: LiteLLMModelInfoResponse;
+			try {
+				parsed = (await resp.json()) as LiteLLMModelInfoResponse;
+			} catch (jsonError) {
+				console.error("[LiteLLM Model Provider] Failed to parse response JSON", jsonError);
+				throw new Error(
+					`Failed to parse LiteLLM response: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}`
+				);
+			}
+
 			console.log("[LiteLLM Model Provider] Parsed response:", {
 				modelCount: parsed.data?.length ?? 0,
 			});
@@ -379,15 +467,12 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				model_info: entry.model_info,
 			}));
 
-			return transformed;
-		})();
-
-		try {
-			const models = await modelsList;
-			console.log("[LiteLLM Model Provider] Successfully fetched models:", models.length);
-			return { models };
+			console.log("[LiteLLM Model Provider] Successfully fetched models:", transformed.length);
+			return { models: transformed };
 		} catch (err) {
-			console.error("[LiteLLM Model Provider] Failed to fetch LiteLLM models", err);
+			console.error("[LiteLLM Model Provider] fetchModels failed", {
+				error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : String(err),
+			});
 			throw err;
 		}
 	}
@@ -434,7 +519,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		try {
 			const config = await this.ensureConfig(true);
 			if (!config) {
-				throw new Error("LiteLLM configuration not found");
+				throw new Error("LiteLLM configuration not found. Please configure the LiteLLM provider.");
 			}
 
 			const openaiMessages = convertMessages(messages);
@@ -463,16 +548,17 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				max_tokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
 			};
 
-			const modelInfo = model as unknown as { model_info?: LiteLLMModelInfo };
+			// Retrieve model info from cache
+			const modelInfo = this._modelInfoCache.get(model.id);
 
 			console.log(`[LiteLLM Model Provider] Model ID: ${model.id}, checking parameter support`);
 			console.log(
 				`[LiteLLM Model Provider] Model info supported_openai_params:`,
-				modelInfo.model_info?.supported_openai_params
+				modelInfo?.supported_openai_params
 			);
 
 			// Only include temperature if the model supports it
-			const tempSupported = this.isParameterSupported("temperature", modelInfo.model_info, model.id);
+			const tempSupported = this.isParameterSupported("temperature", modelInfo, model.id);
 			console.log(`[LiteLLM Model Provider] Temperature supported for ${model.id}: ${tempSupported}`);
 			if (tempSupported) {
 				(requestBody as Record<string, unknown>).temperature = options.modelOptions?.temperature ?? 0.7;
@@ -484,17 +570,17 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			// Allow-list model options based on supported parameters
 			if (options.modelOptions) {
 				const mo = options.modelOptions as Record<string, unknown>;
-				if (this.isParameterSupported("stop", modelInfo.model_info, model.id)) {
+				if (this.isParameterSupported("stop", modelInfo, model.id)) {
 					if (typeof mo.stop === "string" || Array.isArray(mo.stop)) {
 						(requestBody as Record<string, unknown>).stop = mo.stop;
 					}
 				}
-				if (this.isParameterSupported("frequency_penalty", modelInfo.model_info, model.id)) {
+				if (this.isParameterSupported("frequency_penalty", modelInfo, model.id)) {
 					if (typeof mo.frequency_penalty === "number") {
 						(requestBody as Record<string, unknown>).frequency_penalty = mo.frequency_penalty;
 					}
 				}
-				if (this.isParameterSupported("presence_penalty", modelInfo.model_info, model.id)) {
+				if (this.isParameterSupported("presence_penalty", modelInfo, model.id)) {
 					if (typeof mo.presence_penalty === "number") {
 						(requestBody as Record<string, unknown>).presence_penalty = mo.presence_penalty;
 					}
@@ -505,7 +591,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			// Final safety: strip any unsupported parameters that slipped through earlier checks
 			this.stripUnsupportedParametersFromRequest(
 				requestBody as Record<string, unknown>,
-				modelInfo.model_info,
+				modelInfo,
 				model.id
 			);
 			console.log(`[LiteLLM Model Provider] Request body after strip:`, JSON.stringify(requestBody));
@@ -525,7 +611,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				headers.Authorization = `Bearer ${config.apiKey}`;
 				headers["X-API-Key"] = config.apiKey;
 			}
-			const endpoint = this.getCompletionsEndpoint(modelInfo.model_info?.mode);
+			const endpoint = this.getCompletionsEndpoint(modelInfo?.mode);
 			console.log("[LiteLLM Model Provider] Sending chat request", {
 				url: `${config.baseUrl}${endpoint}`,
 				modelId: model.id,
@@ -611,6 +697,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 	/**
 	 * Ensure base URL and API key exist in SecretStorage, optionally prompting the user when not silent.
+	 * Validates the API key by testing the connection to the LiteLLM server.
 	 * @param silent If true, do not prompt the user.
 	 */
 	private async ensureConfig(silent: boolean): Promise<{ baseUrl: string; apiKey: string } | undefined> {
@@ -632,17 +719,56 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			}
 		}
 
-		if (!apiKey && !silent) {
-			const entered = await vscode.window.showInputBox({
-				title: "LiteLLM API Key",
-				prompt: "Enter your LiteLLM API key (leave empty if not required)",
-				ignoreFocusOut: true,
-				password: true,
-			});
-			if (entered !== undefined) {
-				apiKey = entered.trim();
-				if (apiKey) {
+		// Prompt for API key and validate it
+		if (!silent) {
+			let apiKeyValid = false;
+			let promptCount = 0;
+			const maxPrompts = 3;
+
+			while (!apiKeyValid && promptCount < maxPrompts) {
+				promptCount++;
+				const entered = await vscode.window.showInputBox({
+					title: "LiteLLM API Key",
+					prompt: `Enter your LiteLLM API key as a 'default' type (leave empty to skip). Attempt ${promptCount}/${maxPrompts}`,
+					ignoreFocusOut: true,
+					password: true,
+				});
+
+				if (entered === undefined) {
+					// User cancelled
+					break;
+				}
+
+				if (!entered.trim()) {
+					// User left it empty - allow
+					apiKey = "";
+					apiKeyValid = true;
+					await this.secrets.delete("litellm.apiKey");
+				} else if (baseUrl) {
+					// Validate the API key by testing the connection (only if baseUrl is set)
+					const isValid = await this.validateApiKey(baseUrl, entered.trim());
+					if (isValid) {
+						apiKey = entered.trim();
+						await this.secrets.store("litellm.apiKey", apiKey);
+						apiKeyValid = true;
+						vscode.window.showInformationMessage("API key validated successfully!");
+					} else {
+						if (promptCount < maxPrompts) {
+							vscode.window.showErrorMessage(
+								`API key validation failed. Please check your key is a 'default' type. (${promptCount}/${maxPrompts})`
+							);
+						} else {
+							vscode.window.showErrorMessage(
+								`Could not validate API key after ${maxPrompts} attempts. Please reconfigure.`
+							);
+							return undefined;
+						}
+					}
+				} else {
+					// No baseUrl, can't validate
+					apiKey = entered.trim();
 					await this.secrets.store("litellm.apiKey", apiKey);
+					apiKeyValid = true;
 				}
 			}
 		}
@@ -654,6 +780,48 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 		console.log("[LiteLLM Model Provider] Config ready:", { baseUrl, hasApiKey: !!apiKey });
 		return { baseUrl, apiKey: apiKey ?? "" };
+	}
+
+	/**
+	 * Validate the API key by attempting to connect to the LiteLLM server.
+	 * @param baseUrl The LiteLLM base URL
+	 * @param apiKey The API key to validate
+	 * @returns true if the API key is valid, false otherwise
+	 */
+	private async validateApiKey(baseUrl: string, apiKey: string): Promise<boolean> {
+		try {
+			console.log("[LiteLLM Model Provider] Validating API key...");
+			const headers: Record<string, string> = { "User-Agent": this.userAgent };
+			if (apiKey) {
+				headers.Authorization = `Bearer ${apiKey}`;
+				headers["X-API-Key"] = apiKey;
+			}
+
+			const resp = await fetch(`${baseUrl}/model/info`, {
+				method: "GET",
+				headers,
+			});
+
+			console.log("[LiteLLM Model Provider] API key validation response:", resp.status, resp.statusText);
+
+			// Accept 200 (success) or 401/403 (would mean key exists but has issues)
+			// We're just checking if the server is reachable and responding
+			if (resp.ok) {
+				console.log("[LiteLLM Model Provider] API key validation succeeded");
+				return true;
+			}
+
+			if (resp.status === 401 || resp.status === 403) {
+				console.log("[LiteLLM Model Provider] API key invalid (401/403)");
+				return false;
+			}
+
+			console.log("[LiteLLM Model Provider] API key validation failed with status:", resp.status);
+			return false;
+		} catch (err) {
+			console.error("[LiteLLM Model Provider] API key validation error:", err);
+			return false;
+		}
 	}
 
 	/**
