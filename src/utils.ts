@@ -156,7 +156,15 @@ export function convertMessages(messages: readonly vscode.LanguageModelChatReque
 				// Handle image and other data parts
 				if (part.mimeType.startsWith("image/")) {
 					// Convert image data to base64 for OpenAI vision API
-					const base64Data = Buffer.from(part.data).toString("base64");
+					// Properly handle Uint8Array to ensure cross-platform compatibility
+					let base64Data: string;
+					if (part.data instanceof Uint8Array) {
+						base64Data = Buffer.from(part.data).toString("base64");
+					} else if (typeof part.data === "string") {
+						base64Data = Buffer.from(part.data, "utf-8").toString("base64");
+					} else {
+						base64Data = Buffer.from(part.data as unknown as ArrayBuffer).toString("base64");
+					}
 					contentItems.push({
 						type: "image_url",
 						image_url: {

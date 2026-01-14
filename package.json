@@ -32,6 +32,9 @@
 		"url": "https://github.com/Vivswan/litellm-vscode-chat/issues"
 	},
 	"license": "MIT",
+	"activationEvents": [
+		"onLanguageModelChatProvider:litellm"
+	],
 	"contributes": {
 		"languageModelChatProviders": [
 			{
