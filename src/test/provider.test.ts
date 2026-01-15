@@ -426,6 +426,80 @@ suite("LiteLLM Chat Provider Extension", () => {
 
 			// The provider has the KNOWN_PARAMETER_LIMITATIONS constant
 			// which includes claude-haiku-4-5 with temperature limitation
+
+	suite("responses API handling", () => {
+		function makeProvider(): LiteLLMChatModelProvider {
+			return new LiteLLMChatModelProvider(
+				{
+					get: async () => undefined,
+					store: async () => {},
+					delete: async () => {},
+					onDidChange: (_listener: unknown) => ({ dispose() {} }),
+				} as unknown as vscode.SecretStorage,
+				"GitHubCopilotChat/test VSCode/test"
+			);
+		}
+
+		test("transformToResponsesFormat skips tool outputs with no matching function call", () => {
+			const provider = makeProvider();
+			const transform = (provider as unknown as {
+				transformToResponsesFormat: (body: Record<string, unknown>) => Record<string, unknown>;
+			}).transformToResponsesFormat;
+
+			const body = transform({
+				model: "m",
+				messages: [
+					{ role: "user", content: "hello" },
+					{ role: "tool", tool_call_id: "fc_missing", content: "result" },
+				],
+			});
+
+			const input = body.input as Array<Record<string, unknown>>;
+			const functionOutputs = input.filter((item) => item.type === "function_call_output");
+			assert.equal(functionOutputs.length, 0, "should not include outputs for unknown tool calls");
+		});
+
+		test("transformToResponsesFormat includes tool outputs when function call present", () => {
+			const provider = makeProvider();
+			const transform = (provider as unknown as {
+				transformToResponsesFormat: (body: Record<string, unknown>) => Record<string, unknown>;
+			}).transformToResponsesFormat;
+
+			const body = transform({
+				model: "m",
+				messages: [
+					{ role: "assistant", tool_calls: [{ id: "call1", function: { name: "do", arguments: "{}" } }] },
+					{ role: "tool", tool_call_id: "call1", content: "ok" },
+				],
+			});
+
+			const input = body.input as Array<Record<string, unknown>>;
+			const functionCalls = input.filter((item) => item.type === "function_call");
+			const functionOutputs = input.filter((item) => item.type === "function_call_output");
+
+			assert.equal(functionCalls.length, 1, "should include function_call entry");
+			assert.equal(functionOutputs.length, 1, "should include matching function_call_output entry");
+			assert.equal(functionOutputs[0].call_id, "fc_call1", "call_id should be normalized");
+		});
+
+		test("processDelta ignores responses text delta without text payload", async () => {
+			const provider = makeProvider();
+			const processDelta = (provider as unknown as {
+				processDelta: (
+					delta: Record<string, unknown>,
+					progress: vscode.Progress<vscode.LanguageModelResponsePart>
+				) => Promise<boolean>;
+			}).processDelta;
+
+			const reported: vscode.LanguageModelResponsePart[] = [];
+			const progress = { report: (p: vscode.LanguageModelResponsePart) => reported.push(p) };
+
+			const emitted = await processDelta({ type: "response.output_text.delta" }, progress);
+
+			assert.equal(emitted, false);
+			assert.equal(reported.length, 0, "should not emit parts for empty delta");
+		});
+	});
 			// This test passes if the provider initializes without errors
 			assert.ok(provider, "Provider should initialize successfully");
 		});

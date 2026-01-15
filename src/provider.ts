@@ -966,13 +966,21 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		}
 
 		if (eventType === "response.output_text.delta") {
-			// Text delta from responses API - has "delta" field with text chunk
-			const textDelta = delta.delta as string | undefined;
+			// Text delta from responses API - try multiple field names for the text chunk
+			// Different implementations may use: delta, text, or chunk
+			let textDelta = delta.delta as string | undefined;
+			if (!textDelta) {
+				textDelta = delta.text as string | undefined;
+			}
+			if (!textDelta) {
+				textDelta = delta.chunk as string | undefined;
+			}
 			if (textDelta) {
 				console.log("[LiteLLM Model Provider] Processing text delta:", textDelta.slice(0, 50));
 				progress.report(new vscode.LanguageModelTextPart(textDelta));
 				return true;
 			}
+			console.log("[LiteLLM Model Provider] Text delta event received but no text found in delta, text, or chunk fields");
 			return false;
 		}
 
@@ -1099,6 +1107,28 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 							finish_reason: output.finish_reason,
 						};
 					}
+				}
+			}
+		}
+
+		// Additional fallback: try to extract text directly if it exists at top level
+		// Some responses might have "text" or "content" fields at the root level
+		if (!choice && !eventType) {
+			const content = delta.content as string | undefined;
+			if (content) {
+				console.log("[LiteLLM Model Provider] Found text content at root level:", content.slice(0, 50));
+				choice = {
+					delta: { content },
+					finish_reason: undefined,
+				};
+			} else {
+				const text = delta.text as string | undefined;
+				if (text) {
+					console.log("[LiteLLM Model Provider] Found text at root level:", text.slice(0, 50));
+					choice = {
+						delta: { content: text },
+						finish_reason: undefined,
+					};
 				}
 			}
 		}
