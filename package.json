@@ -9,6 +9,7 @@
 		"url": "https://github.com/Vivswan/litellm-vscode-chat"
 	},
 	"version": "0.1.2-dev",
+	"preview": true,
 	"engines": {
 		"vscode": "^1.107.0"
 	},
