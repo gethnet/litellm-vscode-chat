@@ -205,7 +205,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 					)
 					.then((selection) => {
 						if (selection === "Reconfigure") {
-							vscode.commands.executeCommand("litellm.manage");
+							vscode.commands.executeCommand("litellm-connector.manage");
 						}
 					});
 				// Return empty array - caller will show no models available
@@ -216,7 +216,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			if (errorMessage.includes("401") || errorMessage.includes("Authentication")) {
 				vscode.window.showErrorMessage("Authentication failed: " + errorMessage, "Reconfigure").then((selection) => {
 					if (selection === "Reconfigure") {
-						vscode.commands.executeCommand("litellm.manage");
+						vscode.commands.executeCommand("litellm-connector.manage");
 					}
 				});
 				return [];
@@ -228,7 +228,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 					.showErrorMessage("Failed to connect to LiteLLM server: " + errorMessage, "Reconfigure")
 					.then((selection) => {
 						if (selection === "Reconfigure") {
-							vscode.commands.executeCommand("litellm.manage");
+							vscode.commands.executeCommand("litellm-connector.manage");
 						}
 					});
 				return [];
@@ -817,8 +817,8 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 	 */
 	private async ensureConfig(silent: boolean): Promise<{ baseUrl: string; apiKey: string } | undefined> {
 		console.log("[LiteLLM Model Provider] ensureConfig called", { silent });
-		let baseUrl = await this.secrets.get("litellm.baseUrl");
-		let apiKey = await this.secrets.get("litellm.apiKey");
+		let baseUrl = await this.secrets.get("litellm-connector.baseUrl");
+		let apiKey = await this.secrets.get("litellm-connector.apiKey");
 		console.log("[LiteLLM Model Provider] Retrieved from secrets:", { hasBaseUrl: !!baseUrl, hasApiKey: !!apiKey });
 
 		if (!baseUrl && !silent) {
@@ -830,7 +830,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			});
 			if (entered && entered.trim()) {
 				baseUrl = entered.trim();
-				await this.secrets.store("litellm.baseUrl", baseUrl);
+				await this.secrets.store("litellm-connector.baseUrl", baseUrl);
 			}
 		}
 
@@ -858,13 +858,13 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 					// User left it empty - allow
 					apiKey = "";
 					apiKeyValid = true;
-					await this.secrets.delete("litellm.apiKey");
+					await this.secrets.delete("litellm-connector.apiKey");
 				} else if (baseUrl) {
 					// Validate the API key by testing the connection (only if baseUrl is set)
 					const isValid = await this.validateApiKey(baseUrl, entered.trim());
 					if (isValid) {
 						apiKey = entered.trim();
-						await this.secrets.store("litellm.apiKey", apiKey);
+						await this.secrets.store("litellm-connector.apiKey", apiKey);
 						apiKeyValid = true;
 						vscode.window.showInformationMessage("API key validated successfully!");
 					} else {
@@ -882,7 +882,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				} else {
 					// No baseUrl, can't validate
 					apiKey = entered.trim();
-					await this.secrets.store("litellm.apiKey", apiKey);
+					await this.secrets.store("litellm-connector.apiKey", apiKey);
 					apiKeyValid = true;
 				}
 			}

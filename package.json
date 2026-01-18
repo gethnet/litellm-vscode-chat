@@ -1,14 +1,16 @@
 {
-	"name": "litellm-connector-copilot-chat",
-	"publisher": "gethnet",
-	"displayName": "LiteLLM Connector for GitHub Copilot Chat",
-	"description": "An extension that integrates LiteLLM proxy into GitHub Copilot Chat",
+	"name": "litellm-connector-copilot",
+	"publisher": "GethNet",
+	"contributors": ["amwdrizz"],
+	"maintainers": ["amwdrizz"],
+	"displayName": "LiteLLM Connector for Copilot",
+	"description": "An extension that integrates LiteLLM proxy into Copilot",
 	"icon": "assets/logo.png",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/gethnet/litellm-vscode-chat"
 	},
-	"version": "0.2.1-dev",
+	"version": "0.2.0",
 	"preview": true,
 	"engines": {
 		"vscode": "^1.107.0"
