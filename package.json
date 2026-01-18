@@ -1,14 +1,14 @@
 {
-	"name": "litellm-vscode-chat",
-	"publisher": "vivswan",
-	"displayName": "LiteLLM Provider for GitHub Copilot Chat",
-	"description": "An extension that integrates LiteLLM into GitHub Copilot Chat",
+	"name": "litellm-connector-copilot-chat",
+	"publisher": "gethnet",
+	"displayName": "LiteLLM Connector for GitHub Copilot Chat",
+	"description": "An extension that integrates LiteLLM proxy into GitHub Copilot Chat",
 	"icon": "assets/logo.png",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/Vivswan/litellm-vscode-chat"
+		"url": "https://github.com/gethnet/litellm-vscode-chat"
 	},
-	"version": "0.1.2-dev",
+	"version": "0.2.1-dev",
 	"preview": true,
 	"engines": {
 		"vscode": "^1.107.0"
@@ -25,30 +25,30 @@
 	},
 	"badges": [
 		{
-			"url": "https://img.shields.io/github/stars/Vivswan/litellm-vscode-chat?style=social",
+			"url": "https://img.shields.io/github/stars/gethnet/litellm-vscode-chat?style=social",
 			"description": "Star litellm-vscode-chat on Github",
-			"href": "https://github.com/Vivswan/litellm-vscode-chat"
+			"href": "https://github.com/gethnet/litellm-vscode-chat"
 		}
 	],
-	"homepage": "https://github.com/Vivswan/litellm-vscode-chat",
+	"homepage": "https://github.com/gethnet/litellm-vscode-chat",
 	"bugs": {
-		"url": "https://github.com/Vivswan/litellm-vscode-chat/issues"
+		"url": "https://github.com/gethnet/litellm-vscode-chat/issues"
 	},
 	"license": "MIT",
 	"activationEvents": [
-		"onLanguageModelChatProvider:litellm"
+		"onLanguageModelChatProvider:litellm-connector"
 	],
 	"contributes": {
 		"languageModelChatProviders": [
 			{
-				"vendor": "litellm",
+				"vendor": "litellm-connector",
 				"displayName": "LiteLLM",
-				"managementCommand": "litellm.manage"
+				"managementCommand": "litellm-connector.manage"
 			}
 		],
 		"commands": [
 			{
-				"command": "litellm.manage",
+				"command": "litellm-connector.manage",
 				"title": "Manage LiteLLM Provider"
 			}
 		]
@@ -70,16 +70,17 @@
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
 		"@stylistic/eslint-plugin": "^2.9.0",
-		"@types/node": "^22",
 		"@types/mocha": "^10.0.6",
-		"@vscode/dts": "^0.4.1",
+		"@types/node": "^22",
 		"@types/vscode": "^1.104.0",
+		"@vscode/dts": "^0.4.1",
 		"@vscode/test-cli": "^0.0.11",
 		"@vscode/test-electron": "^2.5.2",
 		"eslint": "^9.13.0",
 		"prettier": "^3.1.0",
 		"typescript": "^5.9.2",
-		"typescript-eslint": "^8.39.0"
+		"typescript-eslint": "^8.39.0",
+		"vsce": "^2.15.0"
 	},
 	"extensionDependencies": [
 		"github.copilot-chat"
