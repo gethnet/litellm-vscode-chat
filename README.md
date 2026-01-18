@@ -4,7 +4,7 @@ Integrate LiteLLM proxies into GitHub Copilot Chat through the `litellm-connecto
 
 ## ⚡ Quick Start
 1. Install [GitHub Copilot Chat](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat) if you haven't already.
-2. Install LiteLLM Connector for GitHub Copilot Chat ([marketplace listing](https://marketplace.visualstudio.com/items?itemName=gethnet.litellm-connector-copilot-chat)).
+2. Install LiteLLM Connector for GitHub Copilot Chat ([marketplace listing](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot)).
 3. Open the Copilot Chat interface and select "Manage Models..." from the model picker.
 4. Choose the "LiteLLM" provider (vendor `litellm-connector`) and run the `Manage LiteLLM Provider` command (`litellm-connector.manage`) from the Command Palette.
 5. Enter your LiteLLM base URL (e.g., `http://localhost:4000` or your hosted proxy) and optionally your API key. Values are stored securely in VS Code secret storage.
