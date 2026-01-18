@@ -60,7 +60,7 @@
 		"postdownload-api": "dts main && node -e \"const fs = require('fs'); if (fs.existsSync('vscode.d.ts')) { fs.renameSync('vscode.d.ts', 'src/vscode.d.ts'); console.log('Moved vscode.d.ts to src/'); }\"",
 		"postinstall": "npm run download-api",
 		"compile": "tsc -p ./",
-		"lint": "eslint",
+		"lint": "eslint --fix",
 		"format": "prettier --write .",
 		"watch": "tsc -watch -p ./",
 		"test": "npm run compile && vscode-test",

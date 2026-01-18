@@ -58,6 +58,12 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 	/** Track if we emitted the begin-tool-calls whitespace flush. */
 	private _emittedBeginToolCallsHint = false;
 
+	/**
+	 * Buffer of assistant text already emitted during the current streaming request.
+	 * Used to provide partial output when a request ultimately fails due to rate limiting.
+	 */
+	private _partialAssistantText = "";
+
 	// Lightweight tokenizer state for tool calls embedded in text
 	private _textToolParserBuffer = "";
 	private _textToolActive:
@@ -396,7 +402,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			console.log("[LiteLLM Model Provider] Fetching from:", `${baseUrl}/model/info`);
 			let resp: Response;
 			try {
-				resp = await fetch(`${baseUrl}/model/info`, {
+				resp = await this.fetchWithRateLimit(`${baseUrl}/model/info`, {
 					method: "GET",
 					headers,
 				});
@@ -503,11 +509,15 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		this._textToolActive = undefined;
 		this._emittedTextToolCallKeys.clear();
 		this._emittedTextToolCallIds.clear();
+		this._partialAssistantText = "";
 
 		let requestBody: Record<string, unknown> | undefined;
 		const trackingProgress: Progress<LanguageModelResponsePart> = {
 			report: (part) => {
 				try {
+					if (part instanceof vscode.LanguageModelTextPart) {
+						this._partialAssistantText += part.value;
+					}
 					progress.report(part);
 				} catch (e) {
 					console.error("[LiteLLM Model Provider] Progress.report failed", {
@@ -525,7 +535,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 			// For responses API, trim messages to prevent overwhelming the endpoint
 			// Keep first system message + last N user/assistant messages for context
-			let messagesToUse = messages;
+			const messagesToUse = messages;
 
 			const openaiMessages = convertMessages(messagesToUse);
 			validateRequest(messagesToUse);
@@ -628,7 +638,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				endpoint: endpoint,
 				requestBody: JSON.stringify(finalRequestBody, null, 2),
 			});
-			const response = await this.fetchWithRetry(`${config.baseUrl}${endpoint}`, {
+			const response = await this.fetchWithRateLimit(`${config.baseUrl}${endpoint}`, {
 				method: "POST",
 				headers,
 				body: JSON.stringify(finalRequestBody),
@@ -644,6 +654,10 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			if (!response.ok) {
 				const errorText = await response.text();
 				console.error("[LiteLLM Model Provider] API error response", errorText);
+
+				if (response.status === 429) {
+					throw new Error("LiteLLM rate limit exceeded. Please try again later.");
+				}
 
 				// Provide helpful error message for authentication failures
 				if (response.status === 401) {
@@ -683,6 +697,20 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				messageCount: messages.length,
 				error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
 			});
+
+			// If we hit a rate limit and have partial output, surface it back to the user.
+			const errMsg = err instanceof Error ? err.message : String(err);
+			if ((/\b429\b/.test(errMsg) || /\brate limit\b/i.test(errMsg)) && this._partialAssistantText.trim().length > 0) {
+				try {
+					progress.report(
+						new vscode.LanguageModelTextPart(
+							"\n\n[Rate limit exceeded; returned partial output. Please try again later.]\n"
+						)
+					);
+				} catch {
+					// ignore
+				}
+			}
 			throw err;
 		}
 	}
@@ -690,7 +718,11 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 	/**
 	 * Fetch with automatic retries for transient errors (500).
 	 */
-	private async fetchWithRetry(url: string, init: RequestInit, options?: { retries?: number; delayMs?: number }): Promise<Response> {
+	private async fetchWithRetry(
+		url: string,
+		init: RequestInit,
+		options?: { retries?: number; delayMs?: number }
+	): Promise<Response> {
 		const maxRetries = options?.retries ?? 2;
 		const delayMs = options?.delayMs ?? 1000;
 		let attempt = 0;
@@ -701,7 +733,9 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 					return response;
 				}
 				attempt++;
-				console.warn(`[LiteLLM Model Provider] Retryable response (status ${response.status}). Attempt ${attempt}/${maxRetries}`);
+				console.warn(
+					`[LiteLLM Model Provider] Retryable response (status ${response.status}). Attempt ${attempt}/${maxRetries}`
+				);
 				await new Promise((resolve) => setTimeout(resolve, delayMs));
 			} catch (err) {
 				if (attempt >= maxRetries) {
@@ -711,6 +745,43 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				console.warn("[LiteLLM Model Provider] Fetch failed, retrying", { attempt, error: err });
 				await new Promise((resolve) => setTimeout(resolve, delayMs));
 			}
+		}
+	}
+
+	/**
+	 * Fetch with exponential back-off for rate limiting (429).
+	 * Retries with exponential delay up to a maximum cumulative delay of 2 minutes.
+	 * For other transient errors, it delegates to {@link fetchWithRetry}.
+	 */
+	private async fetchWithRateLimit(
+		url: string,
+		init: RequestInit,
+		options?: { maxTotalDelayMs?: number; initialDelayMs?: number }
+	): Promise<Response> {
+		const maxTotalDelayMs = options?.maxTotalDelayMs ?? 120_000;
+		const initialDelayMs = options?.initialDelayMs ?? 500;
+		let cumulativeDelayMs = 0;
+		let attempt = 0;
+
+		while (true) {
+			// Use existing retry logic for transient 5xx errors.
+			const response = await this.fetchWithRetry(url, init, { retries: 2, delayMs: 1000 });
+			if (response.status !== 429) {
+				return response;
+			}
+
+			const remaining = maxTotalDelayMs - cumulativeDelayMs;
+			if (remaining <= 0) {
+				return response;
+			}
+
+			const nextDelayMs = Math.min(initialDelayMs * Math.pow(2, attempt), remaining);
+			attempt++;
+			cumulativeDelayMs += nextDelayMs;
+			console.warn(
+				`[LiteLLM Model Provider] Rate limit (429). Retrying in ${nextDelayMs}ms (total backoff ${cumulativeDelayMs}ms/${maxTotalDelayMs}ms)`
+			);
+			await new Promise((resolve) => setTimeout(resolve, nextDelayMs));
 		}
 	}
 
@@ -980,7 +1051,9 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				progress.report(new vscode.LanguageModelTextPart(textDelta));
 				return true;
 			}
-			console.log("[LiteLLM Model Provider] Text delta event received but no text found in delta, text, or chunk fields");
+			console.log(
+				"[LiteLLM Model Provider] Text delta event received but no text found in delta, text, or chunk fields"
+			);
 			return false;
 		}
 
@@ -1513,8 +1586,12 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			messageRoles: messages.map((m) => m.role),
 			messageContentLengths: messages.map((m) => {
 				const content = m.content as unknown;
-				if (typeof content === "string") return `string:${content.length}`;
-				if (Array.isArray(content)) return `array:${content.length}`;
+				if (typeof content === "string") {
+					return `string:${content.length}`;
+				}
+				if (Array.isArray(content)) {
+					return `array:${content.length}`;
+				}
 				return "other";
 			}),
 		});
@@ -1539,7 +1616,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				const toolCalls = msg.tool_calls as Array<Record<string, unknown>> | undefined;
 				if (toolCalls && Array.isArray(toolCalls)) {
 					for (const tc of toolCalls) {
-						let id = tc.id as string | undefined;
+						const id = tc.id as string | undefined;
 						if (id) {
 							allToolCallIds.add(id);
 
@@ -1564,7 +1641,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				if (Array.isArray(content)) {
 					for (const part of content) {
 						if (part && typeof part === "object" && (part as Record<string, unknown>).type === "tool_call") {
-							let callId = (part as Record<string, unknown>).callId as string;
+							const callId = (part as Record<string, unknown>).callId as string;
 							if (callId) {
 								allToolCallIds.add(callId);
 
@@ -1627,7 +1704,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				if (toolCallsField && Array.isArray(toolCallsField)) {
 					for (const toolCall of toolCallsField) {
 						hasToolCalls = true;
-						let toolCallId = toolCall.id as string;
+						const toolCallId = toolCall.id as string;
 						const toolFunction = toolCall.function as Record<string, unknown> | undefined;
 						const toolName = toolFunction?.name as string | undefined;
 						const toolArgs = toolFunction?.arguments as unknown;
@@ -1648,7 +1725,8 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 							originalId: toolCallId,
 							normalizedId: normalizedId,
 							name: toolName,
-							argumentsPreview: typeof toolArgs === "string" ? toolArgs.slice(0, 50) : JSON.stringify(toolArgs || {}).slice(0, 50),
+							argumentsPreview:
+								typeof toolArgs === "string" ? toolArgs.slice(0, 50) : JSON.stringify(toolArgs || {}).slice(0, 50),
 						});
 
 						// Add tool call in responses API format with normalized ID
@@ -1667,7 +1745,9 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				if (Array.isArray(content)) {
 					// Content is an array of parts (text, tool calls, etc)
 					for (const part of content) {
-						if (!part || typeof part !== "object") continue;
+						if (!part || typeof part !== "object") {
+							continue;
+						}
 
 						const partType = (part as Record<string, unknown>).type as string;
 
@@ -1680,7 +1760,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 						} else if (partType === "tool_call") {
 							// Tool call part - need to convert to responses API format
 							hasToolCalls = true;
-							let toolCallId = (part as Record<string, unknown>).callId as string;
+							const toolCallId = (part as Record<string, unknown>).callId as string;
 							const toolName = (part as Record<string, unknown>).name as string;
 							const toolArgs = (part as Record<string, unknown>).arguments as unknown;
 
@@ -1711,7 +1791,8 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 								originalId: toolCallId,
 								normalizedId: normalizedId,
 								name: toolName,
-								argumentsPreview: typeof toolArgs === "string" ? toolArgs.slice(0, 50) : JSON.stringify(toolArgs).slice(0, 50),
+								argumentsPreview:
+									typeof toolArgs === "string" ? toolArgs.slice(0, 50) : JSON.stringify(toolArgs).slice(0, 50),
 							});
 						}
 					}
@@ -1746,7 +1827,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			} else if (role === "tool") {
 				// Tool result messages
 				// The Responses API REQUIRES that a function_call exists before its output
-				let toolCallId = msg.tool_call_id as string | undefined;
+				const toolCallId = msg.tool_call_id as string | undefined;
 				const toolContent = typeof content === "string" ? content : JSON.stringify(content);
 
 				if (toolCallId) {
@@ -1771,7 +1852,8 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 						inAddedToolCalls: matchFound,
 						addedToolCallsSize: addedToolCalls.size,
 						allToolCallIdsSize: allToolCallIds.size,
-						outputPreview: typeof toolContent === "string" ? toolContent.slice(0, 100) : String(toolContent).slice(0, 100),
+						outputPreview:
+							typeof toolContent === "string" ? toolContent.slice(0, 100) : String(toolContent).slice(0, 100),
 						addedToolCallsList: Array.from(addedToolCalls),
 					});
 
@@ -1811,10 +1893,8 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		// Build the responses format request body
 		const responsesBody: Record<string, unknown> = {
 			model: requestBody.model,
-			input:
-				inputArray.length === 1 && inputArray[0].role === "user"
-					? (inputArray[0].content as Array<Record<string, unknown>>)[0].text
-					: inputArray,
+			// Always send an array to keep the shape consistent for callers/tests.
+			input: inputArray,
 			stream: requestBody.stream,
 		};
 
@@ -1958,7 +2038,9 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 		console.log("[LiteLLM Model Provider] Transformed request to responses format", {
 			originalMessageCount: (requestBody.messages as Array<unknown>)?.length ?? 0,
-			transformedInputLength: Array.isArray(responsesBody.input) ? (responsesBody.input as Array<unknown>).length : "string",
+			transformedInputLength: Array.isArray(responsesBody.input)
+				? (responsesBody.input as Array<unknown>).length
+				: "string",
 			hasTools: !!responsesBody.tools,
 			inputType: typeof responsesBody.input,
 			hasInstructions: !!responsesBody.instructions,
