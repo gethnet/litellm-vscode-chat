@@ -48,4 +48,4 @@ Common scripts:
 
 ## Support
 
-* Open issues: https://github.com/Vivswan/litellm-vscode-chat/issues
+* Open issues: https://github.com/gethnet/litellm-vscode-chat/issues
