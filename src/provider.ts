@@ -93,10 +93,17 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 	private estimateMessagesTokens(msgs: readonly vscode.LanguageModelChatRequestMessage[]): number {
 		let total = 0;
 		for (const m of msgs) {
-			for (const part of m.content) {
-				if (part instanceof vscode.LanguageModelTextPart) {
-					total += Math.ceil(part.value.length / 4);
-				}
+			total += this.estimateSingleMessageTokens(m);
+		}
+		return total;
+	}
+
+	/** Roughly estimate tokens for a single VS Code chat message (text only) */
+	private estimateSingleMessageTokens(msg: vscode.LanguageModelChatRequestMessage): number {
+		let total = 0;
+		for (const part of msg.content) {
+			if (part instanceof vscode.LanguageModelTextPart) {
+				total += Math.ceil(part.value.length / 4);
 			}
 		}
 		return total;
@@ -115,6 +122,76 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		} catch {
 			return 0;
 		}
+	}
+
+	/**
+	 * Determine whether a model should use stricter Anthropic-style budgeting.
+	 */
+	private isAnthropicModel(modelId: string, modelInfo?: LiteLLMModelInfo): boolean {
+		if (modelInfo?.litellm_provider && /anthropic/i.test(modelInfo.litellm_provider)) {
+			return true;
+		}
+		return /claude/i.test(modelId) || /anthropic/i.test(modelId);
+	}
+
+	/**
+	 * Trim messages to fit within the model's input token budget, preserving the system prompt
+	 * and as much recent context as possible. Anthropic models get a safety margin to avoid
+	 * overfilling the context window.
+	 */
+	private trimMessagesToFitBudget(
+		messages: readonly vscode.LanguageModelChatRequestMessage[],
+		tools: { type: string; function: { name: string; description?: string; parameters?: object } }[] | undefined,
+		model: LanguageModelChatInformation,
+		modelInfo?: LiteLLMModelInfo
+	): readonly vscode.LanguageModelChatRequestMessage[] {
+		const toolTokenCount = this.estimateToolTokens(tools);
+		const tokenLimit = Math.max(1, model.maxInputTokens);
+		const safetyLimit = this.isAnthropicModel(model.id, modelInfo)
+			? Math.max(1, Math.floor(tokenLimit * 0.98))
+			: tokenLimit;
+		const budget = safetyLimit - toolTokenCount;
+		if (budget <= 0) {
+			throw new Error("Message exceeds token limit.");
+		}
+
+		let systemMessage: vscode.LanguageModelChatRequestMessage | undefined;
+		const remaining: vscode.LanguageModelChatRequestMessage[] = [];
+		const userRole = vscode.LanguageModelChatMessageRole.User as unknown as number;
+		const assistantRole = vscode.LanguageModelChatMessageRole.Assistant as unknown as number;
+		for (const msg of messages) {
+			const roleNum = msg.role as unknown as number;
+			const isSystem = roleNum !== userRole && roleNum !== assistantRole;
+			if (!systemMessage && isSystem) {
+				systemMessage = msg;
+			} else {
+				remaining.push(msg);
+			}
+		}
+
+		const selected: vscode.LanguageModelChatRequestMessage[] = [];
+		let used = 0;
+		if (systemMessage) {
+			const sysTokens = this.estimateSingleMessageTokens(systemMessage);
+			if (sysTokens > budget) {
+				throw new Error("Message exceeds token limit.");
+			}
+			selected.push(systemMessage);
+			used += sysTokens;
+		}
+
+		for (let i = remaining.length - 1; i >= 0; i--) {
+			const msg = remaining[i];
+			const msgTokens = this.estimateSingleMessageTokens(msg);
+			if (used + msgTokens <= budget) {
+				selected.splice(systemMessage ? 1 : 0, 0, msg);
+				used += msgTokens;
+			} else {
+				break;
+			}
+		}
+
+		return selected;
 	}
 
 	/**
@@ -533,19 +610,25 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				throw new Error("LiteLLM configuration not found. Please configure the LiteLLM provider.");
 			}
 
-			// For responses API, trim messages to prevent overwhelming the endpoint
-			// Keep first system message + last N user/assistant messages for context
-			const messagesToUse = messages;
+			// Build tool config first so we can include tools in trimming
+			const toolConfig = convertTools(options);
+			const modelInfo = this._modelInfoCache.get(model.id);
+			// Trim messages to fit within model/context budget; Anthropic gets extra headroom
+			const messagesToUse = this.trimMessagesToFitBudget(
+				messages,
+				toolConfig.tools,
+				model,
+				modelInfo
+			);
 
 			const openaiMessages = convertMessages(messagesToUse);
 			validateRequest(messagesToUse);
-			const toolConfig = convertTools(options);
 
 			if (options.tools && options.tools.length > 128) {
 				throw new Error("Cannot have more than 128 tools per request.");
 			}
 
-			const inputTokenCount = this.estimateMessagesTokens(messages);
+			const inputTokenCount = this.estimateMessagesTokens(messagesToUse);
 			const toolTokenCount = this.estimateToolTokens(toolConfig.tools);
 			const tokenLimit = Math.max(1, model.maxInputTokens);
 			if (inputTokenCount + toolTokenCount > tokenLimit) {
@@ -562,9 +645,6 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				stream: true,
 				max_tokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
 			};
-
-			// Retrieve model info from cache
-			const modelInfo = this._modelInfoCache.get(model.id);
 
 			console.log(`[LiteLLM Model Provider] Model info supported_openai_params:`, modelInfo?.supported_openai_params);
 
@@ -775,7 +855,14 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				return response;
 			}
 
-			const nextDelayMs = Math.min(initialDelayMs * Math.pow(2, attempt), remaining);
+			const headerDelayMs = this.parseRetryAfterDelayMs(response);
+			const exponentialDelayMs = initialDelayMs * Math.pow(2, attempt);
+			const chosenDelay = headerDelayMs !== undefined ? headerDelayMs : exponentialDelayMs;
+			const boundedDelay = Math.max(1, chosenDelay); // avoid zero-delay tight loops
+			const nextDelayMs = Math.min(boundedDelay, remaining);
+			if (nextDelayMs <= 0) {
+				return response;
+			}
 			attempt++;
 			cumulativeDelayMs += nextDelayMs;
 			console.warn(
@@ -783,6 +870,53 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			);
 			await new Promise((resolve) => setTimeout(resolve, nextDelayMs));
 		}
+	}
+
+	/**
+	 * Parse a Retry-After or rate-limit reset header into a delay (ms).
+	 * Supports standard Retry-After (seconds or HTTP-date) and Anthropic-style reset headers.
+	 */
+	private parseRetryAfterDelayMs(response: Response): number | undefined {
+		const retryAfter = response.headers.get("retry-after");
+		if (retryAfter) {
+			const secs = Number(retryAfter);
+			if (!Number.isNaN(secs) && secs >= 0) {
+				return secs * 1000;
+			}
+			const asDate = Date.parse(retryAfter);
+			if (!Number.isNaN(asDate)) {
+				const delta = asDate - Date.now();
+				if (delta > 0) {
+					return delta;
+				}
+			}
+		}
+
+		// Anthropic rate limit reset headers are typically seconds until reset
+		const resetHeaders = [
+			"x-ratelimit-reset-requests",
+			"x-ratelimit-reset-tokens",
+			"rate-limit-reset",
+		];
+		for (const h of resetHeaders) {
+			const v = response.headers.get(h);
+			if (!v) {
+				continue;
+			}
+			const secs = Number(v);
+			if (!Number.isNaN(secs) && secs >= 0) {
+				return secs * 1000;
+			}
+			const asDate = Date.parse(v);
+			if (!Number.isNaN(asDate)) {
+				const delta = asDate - Date.now();
+				if (delta > 0) {
+					return delta;
+				}
+			}
+		}
+
+		return undefined;
 	}
 
 	/**

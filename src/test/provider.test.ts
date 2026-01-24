@@ -261,6 +261,7 @@ suite("LiteLLM Chat Provider Extension", () => {
 						status: 429,
 						statusText: "Too Many Requests",
 						text: async () => "rate limited",
+						headers: { get: () => null },
 					} as unknown as Response;
 				}
 				return {
@@ -268,16 +269,18 @@ suite("LiteLLM Chat Provider Extension", () => {
 					status: 200,
 					statusText: "OK",
 					text: async () => "ok",
+					headers: { get: () => null },
 				} as unknown as Response;
 			};
+
+				// Use real timers to avoid tight-loop recursion in the extension host
 
 			const originalFetch = global.fetch;
 			(global as unknown as { fetch: unknown }).fetch = mockFetch as unknown;
 
 			const originalSetTimeout = global.setTimeout;
-			(global as unknown as { setTimeout: unknown }).setTimeout = ((cb: (...args: unknown[]) => void) => {
-				cb();
-				return 0 as unknown;
+			(global as unknown as { setTimeout: unknown }).setTimeout = ((cb: (...args: unknown[]) => void, ms?: number) => {
+					return originalSetTimeout(cb, Math.max(1, ms ?? 1));
 			}) as unknown;
 
 			try {
@@ -310,7 +313,7 @@ suite("LiteLLM Chat Provider Extension", () => {
 				assert.equal(resp.ok, true);
 				assert.equal(calls, 3);
 			} finally {
-				(global as unknown as { fetch: unknown }).fetch = originalFetch;
+				(global as unknown as { fetch: unknown }).fetch = originalFetch as unknown;
 				(global as unknown as { setTimeout: unknown }).setTimeout = originalSetTimeout as unknown;
 			}
 		});
@@ -324,6 +327,9 @@ suite("LiteLLM Chat Provider Extension", () => {
 					status: 429,
 					statusText: "Too Many Requests",
 					text: async () => "rate limited",
+					headers: {
+						get: (name: string) => (name.toLowerCase() === "retry-after" ? "1" : null),
+					},
 				} as unknown as Response;
 			};
 
@@ -331,9 +337,8 @@ suite("LiteLLM Chat Provider Extension", () => {
 			(global as unknown as { fetch: unknown }).fetch = mockFetch as unknown;
 
 			const originalSetTimeout = global.setTimeout;
-			(global as unknown as { setTimeout: unknown }).setTimeout = ((cb: (...args: unknown[]) => void) => {
-				cb();
-				return 0 as unknown;
+			(global as unknown as { setTimeout: unknown }).setTimeout = ((cb: (...args: unknown[]) => void, ms?: number) => {
+				return originalSetTimeout(cb, ms ?? 1);
 			}) as unknown;
 
 			try {
