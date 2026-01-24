@@ -2,6 +2,12 @@
 
 Integrate LiteLLM proxies into GitHub Copilot Chat through the `litellm-connector` vendor that surfaces hundreds of LiteLLM-backed models directly inside VS Code.
 
+## ⚠️ Important - Ensure you have done this! ⚠️
+To fully utilize this extension **YOU MUST** ensure you have an GitHub Copilot plan (Free plan works).  This extension uses the language model chat provider api, and this is a limitation imposed upon extensions.  More information can be found in the relavent doc on https://code.visualstudio.com/api/extension-guides/ai/language-model-chat-provider 
+
+<img width="770" height="231" alt="image" src="https://github.com/user-attachments/assets/b0dfc641-48ad-4a5b-b1ee-ad4e7350bc60" />
+
+
 ## ⚡ Quick Start
 1. Install [GitHub Copilot Chat](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat) if you haven't already.
 2. Install LiteLLM Connector for GitHub Copilot Chat ([marketplace listing](https://marketplace.visualstudio.com/items?itemName=Gethnet.litellm-connector-copilot)).
