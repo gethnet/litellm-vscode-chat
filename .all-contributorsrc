@@ -14,6 +14,13 @@
 			"avatar_url": "https://avatars.githubusercontent.com/u/58091053?v=4",
 			"profile": "https://github.com/Vivswan",
 			"contributions": ["code", "maintenance", "bug", "test"]
+		},
+		{
+			"login": "hanouticelina",
+			"name": "célina",
+			"avatar_url": "https://avatars.githubusercontent.com/u/36770234?v=4",
+			"profile": "https://github.com/hanouticelina",
+			"contributions": ["code", "maintenance", "bug", "test"]
 		}
 	],
 	"contributorsPerLine": 7,

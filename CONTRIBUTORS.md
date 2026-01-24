@@ -10,6 +10,7 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
   <tbody>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/Vivswan"><img src="https://avatars.githubusercontent.com/u/58091053?v=4?s=100" width="100px;" alt="Vivswan Shah"/><br /><sub><b>Vivswan Shah</b></sub></a><br /><a href="https://github.com/gethnet/litellm-vscode-chat/commits?author=Vivswan" title="Code">💻</a> <a href="#maintenance-Vivswan" title="Maintenance">🚧</a> <a href="https://github.com/gethnet/litellm-vscode-chat/issues?q=author%3AVivswan" title="Bug reports">🐛</a> <a href="https://github.com/gethnet/litellm-vscode-chat/commits?author=Vivswan" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/hanouticelina"><img src="https://avatars.githubusercontent.com/u/36770234?v=4?s=100" width="100px;" alt="célina"/><br /><sub><b>célina</b></sub></a><br /><a href="https://github.com/gethnet/litellm-vscode-chat/commits?author=hanouticelina" title="Code">💻</a> <a href="#maintenance-hanouticelina" title="Maintenance">🚧</a> <a href="https://github.com/gethnet/litellm-vscode-chat/issues?q=author%3Ahanouticelina" title="Bug reports">🐛</a> <a href="https://github.com/gethnet/litellm-vscode-chat/commits?author=hanouticelina" title="Tests">⚠️</a></td>
     </tr>
   </tbody>
   <tfoot>
