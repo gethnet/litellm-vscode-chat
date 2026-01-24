@@ -1,6 +1,6 @@
 # LiteLLM Connector for GitHub Copilot Chat
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+[![All Contributors](https://img.shields.io/badge/all_contributors-3-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 Integrate LiteLLM proxies into GitHub Copilot Chat through the `litellm-connector` vendor that surfaces hundreds of LiteLLM-backed models directly inside VS Code.
