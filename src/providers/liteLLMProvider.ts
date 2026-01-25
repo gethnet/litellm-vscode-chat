@@ -77,6 +77,9 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 					const maxInputTokens = modelInfo?.max_input_tokens ?? DEFAULT_CONTEXT_LENGTH;
 					const maxOutputTokens = modelInfo?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 
+					// Build capabilities based on model_info flags
+					const capabilities = this.buildCapabilities(modelInfo);
+
 					return {
 						id: modelId,
 						name: entry.model_name ?? modelId,
@@ -85,10 +88,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 						version: "1.0.0",
 						maxInputTokens: Math.max(1, maxInputTokens),
 						maxOutputTokens: Math.max(1, maxOutputTokens),
-						capabilities: {
-							toolCalling: modelInfo?.supports_function_calling !== false,
-							imageInput: modelInfo?.supports_vision === true,
-						},
+						capabilities,
 					} satisfies LanguageModelChatInformation;
 				}
 			);
@@ -169,6 +169,13 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			if (toolConfig.tool_choice) {
 				requestBody.tool_choice = toolConfig.tool_choice;
 			}
+
+			// Final safety: strip any unsupported parameters that slipped through earlier checks
+			this.stripUnsupportedParametersFromRequest(
+				requestBody as unknown as Record<string, unknown>,
+				modelInfo,
+				model.id
+			);
 
 			const client = new LiteLLMClient(config, this.userAgent);
 			const stream = await client.chat(requestBody, modelInfo?.mode);
@@ -582,5 +589,63 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		return text
 			.replace(/<\|[a-zA-Z0-9_-]+_section_(?:begin|end)\|>/g, "")
 			.replace(/<\|tool_call_(?:argument_)?(?:begin|end)\|>/g, "");
+	}
+
+	/**
+	 * Build capabilities object from model_info flags.
+	 * Maps LiteLLM model capabilities to VSCode LanguageModelChatCapabilities.
+	 */
+	private buildCapabilities(modelInfo: LiteLLMModelInfo | undefined): vscode.LanguageModelChatCapabilities {
+		if (!modelInfo) {
+			// Default capabilities if no model_info available
+			return {
+				toolCalling: true,
+				imageInput: false,
+			};
+		}
+
+		// Map LiteLLM capabilities to VSCode capabilities
+		const capabilities: vscode.LanguageModelChatCapabilities = {
+			// Tool calling is supported if function_calling is supported
+			toolCalling: modelInfo.supports_function_calling !== false,
+			// Image input is supported if vision is supported
+			imageInput: modelInfo.supports_vision === true,
+		};
+
+		return capabilities;
+	}
+
+	/**
+	 * Parse error response from LiteLLM API and extract human-readable message.
+	 */
+	private parseApiError(statusCode: number, errorText: string): string {
+		try {
+			const parsed = JSON.parse(errorText);
+			if (parsed.error?.message) {
+				return parsed.error.message;
+			}
+		} catch {
+			/* ignore */
+		}
+		if (errorText) {
+			return errorText.slice(0, 200);
+		}
+		return `API request failed with status ${statusCode}`;
+	}
+
+	/**
+	 * Remove unsupported parameters from the request body as a final safety net.
+	 */
+	private stripUnsupportedParametersFromRequest(
+		requestBody: Record<string, unknown>,
+		modelInfo: LiteLLMModelInfo | undefined,
+		modelId?: string
+	): void {
+		const paramsToCheck = ["temperature", "stop", "frequency_penalty", "presence_penalty"];
+		for (const p of paramsToCheck) {
+			if (!this.isParameterSupported(p, modelInfo, modelId) && p in requestBody) {
+				delete requestBody[p];
+			}
+		}
 	}
 }

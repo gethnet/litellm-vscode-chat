@@ -105,7 +105,12 @@ export class LiteLLMClient {
 		}
 	}
 
-	private async fetchWithRateLimit(
+	/**
+	 * Fetch with exponential back-off for rate limiting (429).
+	 * Retries with exponential delay up to a maximum cumulative delay of 2 minutes.
+	 * For other transient errors, it delegates to {@link fetchWithRetry}.
+	 */
+	async fetchWithRateLimit(
 		url: string,
 		init: RequestInit,
 		options?: { maxTotalDelayMs?: number; initialDelayMs?: number }
@@ -155,13 +160,34 @@ export class LiteLLMClient {
 		return undefined;
 	}
 
-	private transformToResponsesFormat(requestBody: OpenAIChatCompletionRequest): LiteLLMResponsesRequest {
+	/**
+	 * Transform a chat/completions request body to the responses API format.
+	 * The responses API uses "input" (array format) instead of "messages".
+	 * Tools use the SAME standard OpenAI format as chat/completions.
+	 * @param requestBody The original chat/completions request body
+	 * @returns Transformed request body for the responses endpoint
+	 */
+	transformToResponsesFormat(requestBody: OpenAIChatCompletionRequest): LiteLLMResponsesRequest {
 		const messages = requestBody.messages;
 		const inputArray: (OpenAIChatMessageContentItem | LiteLLMResponseInputItem)[] = [];
 		let instructions: string | undefined;
 
 		const allToolCallIds = new Set<string>();
 		const addedToolCalls = new Set<string>();
+		const toolCallIdMap = new Map<string, string>();
+
+		for (const msg of messages) {
+			if (msg.role === "assistant" && msg.tool_calls) {
+				for (const tc of msg.tool_calls) {
+					let normalizedId = tc.id;
+					if (!normalizedId.startsWith("fc_")) {
+						normalizedId = `fc_${normalizedId}`;
+					}
+					toolCallIdMap.set(tc.id, normalizedId);
+					allToolCallIds.add(normalizedId);
+				}
+			}
+		}
 
 		for (const msg of messages) {
 			if (msg.role === "system") {
@@ -181,11 +207,11 @@ export class LiteLLMClient {
 				}
 				if (msg.tool_calls) {
 					for (const tc of msg.tool_calls) {
-						allToolCallIds.add(tc.id);
-						addedToolCalls.add(tc.id);
+						const normalizedId = toolCallIdMap.get(tc.id) || tc.id;
+						addedToolCalls.add(normalizedId);
 						inputArray.push({
 							type: "function_call",
-							id: tc.id,
+							id: normalizedId,
 							name: tc.function.name,
 							arguments: tc.function.arguments,
 						});
@@ -194,11 +220,12 @@ export class LiteLLMClient {
 			} else if (msg.role === "tool") {
 				const toolCallId = msg.tool_call_id;
 				if (toolCallId) {
+					const normalizedId = toolCallIdMap.get(toolCallId) || toolCallId;
 					const toolContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-					if (addedToolCalls.has(toolCallId)) {
+					if (addedToolCalls.has(normalizedId)) {
 						inputArray.push({
 							type: "function_call_output",
-							call_id: toolCallId,
+							call_id: normalizedId,
 							output: toolContent,
 						});
 					}

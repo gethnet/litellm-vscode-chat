@@ -14,7 +14,7 @@
 		"type": "git",
 		"url": "https://github.com/gethnet/litellm-vscode-chat"
 	},
-	"version": "1.0.1-dev",
+	"version": "1.0.3-dev",
 	"preview": true,
 	"engines": {
 		"vscode": "^1.107.0"
@@ -70,7 +70,7 @@
 		"lint": "eslint --fix",
 		"format": "prettier --write .",
 		"watch": "tsc -watch -p ./",
-		"test": "npm run compile && vscode-test",
+		"test": "npm run compile && xvfb-run vscode-test",
 		"bump-version": "node scripts/bump-version.js"
 	},
 	"devDependencies": {
