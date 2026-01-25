@@ -1,0 +1,35 @@
+{
+	"projectName": "litellm-vscode-chat",
+	"projectOwner": "gethnet",
+	"repoType": "github",
+	"repoHost": "https://github.com",
+	"files": ["CONTRIBUTORS.md", "README.md"],
+	"imageSize": 100,
+	"commit": true,
+	"commitConvention": "eslint",
+	"contributors": [
+		{
+			"login": "Vivswan",
+			"name": "Vivswan Shah",
+			"avatar_url": "https://avatars.githubusercontent.com/u/58091053?v=4",
+			"profile": "https://github.com/Vivswan",
+			"contributions": ["code", "maintenance", "bug", "test"]
+		},
+		{
+			"login": "hanouticelina",
+			"name": "célina",
+			"avatar_url": "https://avatars.githubusercontent.com/u/36770234?v=4",
+			"profile": "https://github.com/hanouticelina",
+			"contributions": ["code", "maintenance", "bug", "test"]
+		},
+		{
+			"login": "amwdrizz",
+			"name": "amwdrizz",
+			"avatar_url": "https://avatars.githubusercontent.com/u/1386055?v=4",
+			"profile": "https://github.com/amwdrizz",
+			"contributions": ["code", "maintenance", "bug", "test", "data", "example", "review"]
+		}
+	],
+	"contributorsPerLine": 7,
+	"linkToUsage": true
+}
