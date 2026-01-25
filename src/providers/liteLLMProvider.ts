@@ -26,6 +26,9 @@ const KNOWN_PARAMETER_LIMITATIONS: Record<string, Set<string>> = {
 	"gpt-5.1-codex-mini": new Set(["temperature", "frequency_penalty", "presence_penalty"]),
 	"gpt-5.1-codex-max": new Set(["temperature", "frequency_penalty", "presence_penalty"]),
 	"codex-mini-latest": new Set(["temperature", "frequency_penalty", "presence_penalty"]),
+	"o1-preview": new Set(["temperature", "top_p", "presence_penalty", "frequency_penalty"]),
+	"o1-mini": new Set(["temperature", "top_p", "presence_penalty", "frequency_penalty"]),
+	"o1-": new Set(["temperature", "top_p", "presence_penalty", "frequency_penalty"]),
 };
 
 export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
@@ -149,6 +152,9 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 				if (this.isParameterSupported("stop", modelInfo, model.id) && mo.stop) {
 					requestBody.stop = mo.stop as string | string[];
 				}
+				if (this.isParameterSupported("top_p", modelInfo, model.id) && typeof mo.top_p === "number") {
+					requestBody.top_p = mo.top_p;
+				}
 				if (
 					this.isParameterSupported("frequency_penalty", modelInfo, model.id) &&
 					typeof mo.frequency_penalty === "number"
@@ -178,11 +184,62 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			);
 
 			const client = new LiteLLMClient(config, this.userAgent);
-			const stream = await client.chat(requestBody, modelInfo?.mode);
+			let stream: ReadableStream<Uint8Array>;
+			try {
+				stream = await client.chat(requestBody, modelInfo?.mode);
+			} catch (err: any) {
+				// If we get an unsupported parameter error, try one more time without those parameters
+				if (err.message.includes("LiteLLM API error")) {
+					const errorText = err.message.split("\n").slice(1).join("\n");
+					const parsedMessage = this.parseApiError(400, errorText);
+					if (
+						parsedMessage.toLowerCase().includes("unsupported parameter") ||
+						parsedMessage.toLowerCase().includes("not supported")
+					) {
+						console.warn(
+							`[LiteLLM Model Provider] Retrying request without optional parameters due to: ${parsedMessage}`
+						);
+						// Strip common optional parameters that might cause issues
+						delete requestBody.temperature;
+						delete requestBody.top_p;
+						delete requestBody.frequency_penalty;
+						delete requestBody.presence_penalty;
+						delete requestBody.stop;
+
+						stream = await client.chat(requestBody, modelInfo?.mode);
+					} else {
+						throw err;
+					}
+				} else {
+					throw err;
+				}
+			}
+
 			await this.processStreamingResponse(stream, trackingProgress, token);
-		} catch (err) {
+		} catch (err: any) {
+			let errorMessage = err instanceof Error ? err.message : String(err);
+
+			// If it's a LiteLLM API error, try to parse it for more detail
+			if (errorMessage.includes("LiteLLM API error")) {
+				const statusMatch = errorMessage.match(/error: (\d+)/);
+				const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 400;
+				const errorParts = errorMessage.split("\n");
+				const errorText = errorParts.length > 1 ? errorParts.slice(1).join("\n") : "";
+
+				const parsedMessage = this.parseApiError(statusCode, errorText);
+				errorMessage = `LiteLLM Error (${model.id}): ${parsedMessage}`;
+
+				if (
+					parsedMessage.toLowerCase().includes("temperature") ||
+					parsedMessage.toLowerCase().includes("unsupported value")
+				) {
+					errorMessage +=
+						". This model may not support certain parameters like temperature. Please check your model settings.";
+				}
+			}
+
 			console.error("[LiteLLM Model Provider] Chat request failed", err);
-			throw err;
+			throw new Error(errorMessage);
 		}
 	}
 
@@ -641,7 +698,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		modelInfo: LiteLLMModelInfo | undefined,
 		modelId?: string
 	): void {
-		const paramsToCheck = ["temperature", "stop", "frequency_penalty", "presence_penalty"];
+		const paramsToCheck = ["temperature", "stop", "frequency_penalty", "presence_penalty", "top_p"];
 		for (const p of paramsToCheck) {
 			if (!this.isParameterSupported(p, modelInfo, modelId) && p in requestBody) {
 				delete requestBody[p];
