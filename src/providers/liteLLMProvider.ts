@@ -186,8 +186,11 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			const client = new LiteLLMClient(config, this.userAgent);
 			let stream: ReadableStream<Uint8Array>;
 			try {
-				stream = await client.chat(requestBody, modelInfo?.mode);
+				stream = await client.chat(requestBody, modelInfo?.mode, token);
 			} catch (err: any) {
+				if (token.isCancellationRequested) {
+					throw new Error("Operation cancelled by user");
+				}
 				// If we get an unsupported parameter error, try one more time without those parameters
 				if (err.message.includes("LiteLLM API error")) {
 					const errorText = err.message.split("\n").slice(1).join("\n");
@@ -206,7 +209,10 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 						delete requestBody.presence_penalty;
 						delete requestBody.stop;
 
-						stream = await client.chat(requestBody, modelInfo?.mode);
+						if (token.isCancellationRequested) {
+							throw new Error("Operation cancelled by user");
+						}
+						stream = await client.chat(requestBody, modelInfo?.mode, token);
 					} else {
 						throw err;
 					}
@@ -311,12 +317,17 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		const decoder = new TextDecoder();
 		let buffer = "";
 
+		token.onCancellationRequested(() => {
+			reader.cancel("User cancelled");
+		});
+
 		try {
 			while (!token.isCancellationRequested) {
 				const { done, value } = await reader.read();
 				if (done) {
 					break;
 				}
+				// ...existing code...
 
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split("\n");
