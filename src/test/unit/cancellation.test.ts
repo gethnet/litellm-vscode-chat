@@ -1,0 +1,76 @@
+import * as assert from "assert";
+import * as vscode from "vscode";
+import { LiteLLMClient } from "../../adapters/litellmClient";
+
+suite("LiteLLM Client Cancellation Tests", () => {
+	const config = { url: "http://localhost:1234", key: "test-key" };
+	const client = new LiteLLMClient(config, "test-ua");
+
+	test("chat should be aborted when token is cancelled during fetch", async () => {
+		const cts = new vscode.CancellationTokenSource();
+		const request: any = { model: "test", messages: [], stream: true };
+
+		// Mock fetch to delay then check signal
+		const originalFetch = global.fetch;
+		(global as any).fetch = async (url: string, init: any) => {
+			return new Promise((resolve, reject) => {
+				const timeout = setTimeout(() => {
+					resolve(
+						new Response(
+							new ReadableStream({
+								start(controller) {
+									controller.close();
+								},
+							})
+						)
+					);
+				}, 100);
+				init.signal.addEventListener("abort", () => {
+					clearTimeout(timeout);
+					reject(new DOMException("Aborted", "AbortError"));
+				});
+			});
+		};
+
+		try {
+			const chatPromise = client.chat(request, "chat", cts.token);
+			cts.cancel();
+			await chatPromise;
+			assert.fail("Should have thrown cancellation error");
+		} catch (err: any) {
+			assert.strictEqual(err.message, "Operation cancelled by user");
+		} finally {
+			global.fetch = originalFetch;
+		}
+	});
+
+	test("fetchWithRetry should respect cancellation during sleep", async () => {
+		const cts = new vscode.CancellationTokenSource();
+
+		// Mock fetch to fail once with 500
+		let callCount = 0;
+		const originalFetch = global.fetch;
+		(global as any).fetch = async () => {
+			callCount++;
+			return new Response("Error", { status: 500 });
+		};
+
+		const clientAny = client as any;
+		// Use a large delay to ensure we are sleeping when we cancel
+		const retryPromise = clientAny.fetchWithRetry("http://url", {}, { retries: 2, delayMs: 5000, token: cts.token });
+
+		// Wait a bit for the first failure then cancel during sleep
+		await new Promise((r) => setTimeout(r, 200));
+		cts.cancel();
+
+		try {
+			await retryPromise;
+			assert.fail("Should have thrown cancellation error");
+		} catch (err: any) {
+			assert.strictEqual(err.message, "Operation cancelled by user");
+			assert.strictEqual(callCount, 1, "Should not have retried after cancellation");
+		} finally {
+			global.fetch = originalFetch;
+		}
+	});
+});

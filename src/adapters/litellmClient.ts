@@ -1,3 +1,4 @@
+import * as vscode from "vscode";
 import {
 	LiteLLMConfig,
 	LiteLLMModelInfoResponse,
@@ -17,9 +18,15 @@ export class LiteLLMClient {
 	/**
 	 * Fetches model information from the LiteLLM proxy.
 	 */
-	async getModelInfo(): Promise<LiteLLMModelInfoResponse> {
+	async getModelInfo(token?: vscode.CancellationToken): Promise<LiteLLMModelInfoResponse> {
+		const controller = new AbortController();
+		if (token) {
+			token.onCancellationRequested(() => controller.abort());
+		}
+
 		const resp = await fetch(`${this.config.url}/model/info`, {
 			headers: this.getHeaders(),
+			signal: controller.signal,
 		});
 		if (!resp.ok) {
 			throw new Error(`Failed to fetch model info: ${resp.status} ${resp.statusText}`);
@@ -30,7 +37,11 @@ export class LiteLLMClient {
 	/**
 	 * Sends a chat request to the LiteLLM proxy.
 	 */
-	async chat(request: OpenAIChatCompletionRequest, mode?: string): Promise<ReadableStream<Uint8Array>> {
+	async chat(
+		request: OpenAIChatCompletionRequest,
+		mode?: string,
+		token?: vscode.CancellationToken
+	): Promise<ReadableStream<Uint8Array>> {
 		const endpoint = this.getEndpoint(mode);
 		let body: OpenAIChatCompletionRequest | LiteLLMResponsesRequest = request;
 
@@ -38,11 +49,15 @@ export class LiteLLMClient {
 			body = this.transformToResponsesFormat(request);
 		}
 
-		const response = await this.fetchWithRateLimit(`${this.config.url}${endpoint}`, {
-			method: "POST",
-			headers: this.getHeaders(),
-			body: JSON.stringify(body),
-		});
+		const response = await this.fetchWithRateLimit(
+			`${this.config.url}${endpoint}`,
+			{
+				method: "POST",
+				headers: this.getHeaders(),
+				body: JSON.stringify(body),
+			},
+			{ token }
+		);
 
 		if (!response.ok) {
 			const errorText = await response.text();
@@ -82,25 +97,37 @@ export class LiteLLMClient {
 	private async fetchWithRetry(
 		url: string,
 		init: RequestInit,
-		options?: { retries?: number; delayMs?: number }
+		options?: { retries?: number; delayMs?: number; token?: vscode.CancellationToken }
 	): Promise<Response> {
 		const maxRetries = options?.retries ?? 2;
 		const delayMs = options?.delayMs ?? 1000;
 		let attempt = 0;
 		while (true) {
+			if (options?.token?.isCancellationRequested) {
+				throw new Error("Operation cancelled by user");
+			}
+
+			const controller = new AbortController();
+			const disposable = options?.token?.onCancellationRequested(() => controller.abort());
+
 			try {
-				const response = await fetch(url, init);
+				const response = await fetch(url, { ...init, signal: controller.signal });
 				if (response.ok || attempt >= maxRetries || response.status < 500 || response.status >= 600) {
 					return response;
 				}
 				attempt++;
-				await new Promise((resolve) => setTimeout(resolve, delayMs));
-			} catch (err) {
+				await this.sleep(delayMs, options?.token);
+			} catch (err: any) {
+				if (err.name === "AbortError") {
+					throw new Error("Operation cancelled by user");
+				}
 				if (attempt >= maxRetries) {
 					throw err;
 				}
 				attempt++;
-				await new Promise((resolve) => setTimeout(resolve, delayMs));
+				await this.sleep(delayMs, options?.token);
+			} finally {
+				disposable?.dispose();
 			}
 		}
 	}
@@ -113,7 +140,7 @@ export class LiteLLMClient {
 	async fetchWithRateLimit(
 		url: string,
 		init: RequestInit,
-		options?: { maxTotalDelayMs?: number; initialDelayMs?: number }
+		options?: { maxTotalDelayMs?: number; initialDelayMs?: number; token?: vscode.CancellationToken }
 	): Promise<Response> {
 		const maxTotalDelayMs = options?.maxTotalDelayMs ?? 120_000;
 		const initialDelayMs = options?.initialDelayMs ?? 500;
@@ -121,7 +148,11 @@ export class LiteLLMClient {
 		let attempt = 0;
 
 		while (true) {
-			const response = await this.fetchWithRetry(url, init);
+			if (options?.token?.isCancellationRequested) {
+				throw new Error("Operation cancelled by user");
+			}
+
+			const response = await this.fetchWithRetry(url, init, { token: options?.token });
 			if (response.status !== 429) {
 				return response;
 			}
@@ -138,8 +169,18 @@ export class LiteLLMClient {
 
 			attempt++;
 			cumulativeDelayMs += nextDelayMs;
-			await new Promise((resolve) => setTimeout(resolve, nextDelayMs));
+			await this.sleep(nextDelayMs, options?.token);
 		}
+	}
+
+	private sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(resolve, ms);
+			token?.onCancellationRequested(() => {
+				clearTimeout(timer);
+				reject(new Error("Operation cancelled by user"));
+			});
+		});
 	}
 
 	private parseRetryAfterDelayMs(response: Response): number | undefined {
