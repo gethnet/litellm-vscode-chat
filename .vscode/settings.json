@@ -5,5 +5,8 @@
     "git.branchProtection": [
         "main"
     ],
-    "files.trimTrailingWhitespace": true
+    "files.trimTrailingWhitespace": true,
+    "chat.tools.terminal.autoApprove": {
+        "xvfb-run": true
+    }
 }
