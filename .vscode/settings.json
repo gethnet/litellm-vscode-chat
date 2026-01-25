@@ -7,6 +7,7 @@
     ],
     "files.trimTrailingWhitespace": true,
     "chat.tools.terminal.autoApprove": {
+        "/^npm .*$/": true,
         "xvfb-run": true
     }
 }

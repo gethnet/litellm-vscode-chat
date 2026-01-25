@@ -187,12 +187,12 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			let stream: ReadableStream<Uint8Array>;
 			try {
 				stream = await client.chat(requestBody, modelInfo?.mode, token);
-			} catch (err: any) {
+			} catch (err: unknown) {
 				if (token.isCancellationRequested) {
 					throw new Error("Operation cancelled by user");
 				}
 				// If we get an unsupported parameter error, try one more time without those parameters
-				if (err.message.includes("LiteLLM API error")) {
+				if (err instanceof Error && err.message.includes("LiteLLM API error")) {
 					const errorText = err.message.split("\n").slice(1).join("\n");
 					const parsedMessage = this.parseApiError(400, errorText);
 					if (
@@ -222,7 +222,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 			}
 
 			await this.processStreamingResponse(stream, trackingProgress, token);
-		} catch (err: any) {
+		} catch (err: unknown) {
 			let errorMessage = err instanceof Error ? err.message : String(err);
 
 			// If it's a LiteLLM API error, try to parse it for more detail

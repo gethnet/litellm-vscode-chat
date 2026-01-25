@@ -8,11 +8,13 @@ suite("LiteLLM Client Cancellation Tests", () => {
 
 	test("chat should be aborted when token is cancelled during fetch", async () => {
 		const cts = new vscode.CancellationTokenSource();
-		const request: any = { model: "test", messages: [], stream: true };
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const request = { model: "test", messages: [], stream: true } as any;
 
 		// Mock fetch to delay then check signal
 		const originalFetch = global.fetch;
-		(global as any).fetch = async (url: string, init: any) => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		(global as any).fetch = async (url: string, init: RequestInit) => {
 			return new Promise((resolve, reject) => {
 				const timeout = setTimeout(() => {
 					resolve(
@@ -25,7 +27,7 @@ suite("LiteLLM Client Cancellation Tests", () => {
 						)
 					);
 				}, 100);
-				init.signal.addEventListener("abort", () => {
+				init.signal?.addEventListener("abort", () => {
 					clearTimeout(timeout);
 					reject(new DOMException("Aborted", "AbortError"));
 				});
@@ -37,8 +39,12 @@ suite("LiteLLM Client Cancellation Tests", () => {
 			cts.cancel();
 			await chatPromise;
 			assert.fail("Should have thrown cancellation error");
-		} catch (err: any) {
-			assert.strictEqual(err.message, "Operation cancelled by user");
+		} catch (err: unknown) {
+			if (err instanceof Error) {
+				assert.strictEqual(err.message, "Operation cancelled by user");
+			} else {
+				assert.fail("Error should be an instance of Error");
+			}
 		} finally {
 			global.fetch = originalFetch;
 		}
@@ -50,11 +56,13 @@ suite("LiteLLM Client Cancellation Tests", () => {
 		// Mock fetch to fail once with 500
 		let callCount = 0;
 		const originalFetch = global.fetch;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		(global as any).fetch = async () => {
 			callCount++;
 			return new Response("Error", { status: 500 });
 		};
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const clientAny = client as any;
 		// Use a large delay to ensure we are sleeping when we cancel
 		const retryPromise = clientAny.fetchWithRetry("http://url", {}, { retries: 2, delayMs: 5000, token: cts.token });
@@ -66,8 +74,12 @@ suite("LiteLLM Client Cancellation Tests", () => {
 		try {
 			await retryPromise;
 			assert.fail("Should have thrown cancellation error");
-		} catch (err: any) {
-			assert.strictEqual(err.message, "Operation cancelled by user");
+		} catch (err: unknown) {
+			if (err instanceof Error) {
+				assert.strictEqual(err.message, "Operation cancelled by user");
+			} else {
+				assert.fail("Error should be an instance of Error");
+			}
 			assert.strictEqual(callCount, 1, "Should not have retried after cancellation");
 		} finally {
 			global.fetch = originalFetch;

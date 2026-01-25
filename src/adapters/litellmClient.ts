@@ -117,8 +117,8 @@ export class LiteLLMClient {
 				}
 				attempt++;
 				await this.sleep(delayMs, options?.token);
-			} catch (err: any) {
-				if (err.name === "AbortError") {
+			} catch (err: unknown) {
+				if (err instanceof Error && err.name === "AbortError") {
 					throw new Error("Operation cancelled by user");
 				}
 				if (attempt >= maxRetries) {
@@ -174,10 +174,17 @@ export class LiteLLMClient {
 	}
 
 	private sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
+		if (token?.isCancellationRequested) {
+			return Promise.reject(new Error("Operation cancelled by user"));
+		}
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(resolve, ms);
-			token?.onCancellationRequested(() => {
+			const timer = setTimeout(() => {
+				disposable?.dispose();
+				resolve();
+			}, ms);
+			const disposable = token?.onCancellationRequested(() => {
 				clearTimeout(timer);
+				disposable?.dispose();
 				reject(new Error("Operation cancelled by user"));
 			});
 		});
