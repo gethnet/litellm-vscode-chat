@@ -14,7 +14,7 @@
 		"type": "git",
 		"url": "https://github.com/gethnet/litellm-vscode-chat"
 	},
-	"version": "1.0.3-dev",
+	"version": "1.0.4-dev",
 	"preview": true,
 	"engines": {
 		"vscode": "^1.107.0"
@@ -78,16 +78,18 @@
 		"@stylistic/eslint-plugin": "^2.9.0",
 		"@types/mocha": "^10.0.6",
 		"@types/node": "^22",
+		"@types/sinon": "^21.0.0",
 		"@types/vscode": "^1.104.0",
 		"@vscode/dts": "^0.4.1",
 		"@vscode/test-cli": "^0.0.11",
 		"@vscode/test-electron": "^2.5.2",
+		"@vscode/vsce": "^3.7.0",
 		"all-contributors-cli": "^6.26.1",
 		"eslint": "^9.13.0",
 		"prettier": "^3.1.0",
+		"sinon": "^21.0.1",
 		"typescript": "^5.9.2",
-		"typescript-eslint": "^8.39.0",
-		"@vscode/vsce": "^3.7.0"
+		"typescript-eslint": "^8.39.0"
 	},
 	"extensionDependencies": [
 		"github.copilot-chat"
