@@ -1,8 +1,12 @@
 {
 	"name": "litellm-connector-copilot",
 	"publisher": "GethNet",
-	"contributors": ["amwdrizz"],
-	"maintainers": ["amwdrizz"],
+	"contributors": [
+		"amwdrizz"
+	],
+	"maintainers": [
+		"amwdrizz"
+	],
 	"displayName": "LiteLLM Connector for Copilot",
 	"description": "An extension that integrates LiteLLM proxy into Copilot",
 	"icon": "assets/logo.png",
@@ -10,7 +14,7 @@
 		"type": "git",
 		"url": "https://github.com/gethnet/litellm-vscode-chat"
 	},
-	"version": "0.2.1",
+	"version": "1.0.1-dev",
 	"preview": true,
 	"engines": {
 		"vscode": "^1.107.0"
@@ -36,7 +40,7 @@
 	"bugs": {
 		"url": "https://github.com/gethnet/litellm-vscode-chat/issues"
 	},
-	"license": "MIT",
+	"license": "Apache-2.0",
 	"activationEvents": [
 		"onLanguageModelChatProvider:litellm-connector"
 	],
@@ -58,6 +62,7 @@
 	"main": "./out/extension.js",
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
+		"vscode:pack": "npx vsce package",
 		"download-api": "dts dev",
 		"postdownload-api": "dts main && node -e \"const fs = require('fs'); if (fs.existsSync('vscode.d.ts')) { fs.renameSync('vscode.d.ts', 'src/vscode.d.ts'); console.log('Moved vscode.d.ts to src/'); }\"",
 		"postinstall": "npm run download-api",
@@ -68,7 +73,6 @@
 		"test": "npm run compile && vscode-test",
 		"bump-version": "node scripts/bump-version.js"
 	},
-	"dependencies": {},
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
 		"@stylistic/eslint-plugin": "^2.9.0",
@@ -78,14 +82,14 @@
 		"@vscode/dts": "^0.4.1",
 		"@vscode/test-cli": "^0.0.11",
 		"@vscode/test-electron": "^2.5.2",
+		"all-contributors-cli": "^6.26.1",
 		"eslint": "^9.13.0",
 		"prettier": "^3.1.0",
 		"typescript": "^5.9.2",
 		"typescript-eslint": "^8.39.0",
-		"vsce": "^2.15.0"
+		"@vscode/vsce": "^3.7.0"
 	},
 	"extensionDependencies": [
 		"github.copilot-chat"
-	],
-	"packageManager": "pnpm@8.15.4+sha512.0bd3a9be9eb0e9a692676deec00a303ba218ba279d99241475616b398dbaeedd11146f92c2843458f557b1d127e09d4c171e105bdcd6b61002b39685a8016b9e"
+	]
 }

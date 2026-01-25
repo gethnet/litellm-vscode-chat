@@ -51,6 +51,14 @@ export interface LiteLLMParams {
 }
 
 /**
+ * LiteLLM configuration stored in VS Code settings.
+ */
+export interface LiteLLMConfig {
+	url: string;
+	key?: string;
+}
+
+/**
  * Detailed model information from LiteLLM proxy including capabilities and token constraints.
  */
 export interface LiteLLMModelInfo {
@@ -96,6 +104,59 @@ export interface LiteLLMModelEntry {
  */
 export interface LiteLLMModelInfoResponse {
 	data: LiteLLMModelEntry[];
+}
+
+/**
+ * OpenAI-style chat completion request.
+ */
+export interface OpenAIChatCompletionRequest {
+	model: string;
+	messages: OpenAIChatMessage[];
+	stream?: boolean;
+	max_tokens?: number;
+	temperature?: number;
+	top_p?: number;
+	frequency_penalty?: number;
+	presence_penalty?: number;
+	stop?: string | string[];
+	tools?: OpenAIFunctionToolDef[];
+	tool_choice?: string | object;
+}
+
+/**
+ * LiteLLM /responses endpoint request.
+ */
+export interface LiteLLMResponsesRequest {
+	model: string;
+	input: (OpenAIChatMessageContentItem | LiteLLMResponseInputItem)[];
+	instructions?: string;
+	stream?: boolean;
+	max_tokens?: number;
+	temperature?: number;
+	top_p?: number;
+	frequency_penalty?: number;
+	presence_penalty?: number;
+	stop?: string | string[];
+	tools?: LiteLLMResponseTool[];
+	tool_choice?: string | object;
+}
+
+/**
+ * Input item for LiteLLM /responses endpoint.
+ */
+export type LiteLLMResponseInputItem =
+	| { type: "text"; text: string }
+	| { type: "function_call"; id: string; name: string; arguments: string }
+	| { type: "function_call_output"; call_id: string; output: string };
+
+/**
+ * Tool definition for LiteLLM /responses endpoint.
+ */
+export interface LiteLLMResponseTool {
+	type: "function";
+	name: string;
+	description: string;
+	parameters: object;
 }
 
 /**
