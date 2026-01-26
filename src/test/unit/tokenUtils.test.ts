@@ -88,10 +88,9 @@ suite("TokenUtils Unit Tests", () => {
 			maxInputTokens: 2, // budget will be 2 - 0 = 2. msg is 26 chars -> 7 tokens.
 		} as vscode.LanguageModelChatInformation;
 
-		// The current implementation only throws if system message exceeds budget OR if budget <= 0.
-		// If a single non-system message exceeds budget, it just doesn't include it.
-		// Let's test that it returns empty (or just system) if non-system message is too big.
+		// The current implementation now ensures at least one message is returned
+		// if budget allows for the system message or if no system message exists.
 		const trimmed = trimMessagesToFitBudget([msg], undefined, modelInfo);
-		assert.strictEqual(trimmed.length, 0);
+		assert.strictEqual(trimmed.length, 1);
 	});
 });

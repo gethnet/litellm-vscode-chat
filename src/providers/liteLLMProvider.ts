@@ -50,6 +50,8 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		undefined;
 	private _emittedTextToolCallKeys = new Set<string>();
 	private _emittedTextToolCallIds = new Set<string>();
+	private _lastEmittedText = "";
+	private _repeatCount = 0;
 
 	constructor(
 		private readonly secrets: vscode.SecretStorage,
@@ -83,7 +85,7 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 					// Build capabilities based on model_info flags
 					const capabilities = this.buildCapabilities(modelInfo);
 
-					return {
+					const info = {
 						id: modelId,
 						name: entry.model_name ?? modelId,
 						tooltip: `${modelInfo?.litellm_provider ?? "LiteLLM"} (${modelInfo?.mode ?? "responses"})`,
@@ -93,6 +95,10 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 						maxOutputTokens: Math.max(1, maxOutputTokens),
 						capabilities,
 					} satisfies LanguageModelChatInformation;
+
+					// If model has exceptionally high context, ensure we don't overflow VS Code's expectations if any
+					// but generally we trust model_info
+					return info;
 				}
 			);
 
@@ -145,6 +151,15 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 
 			if (this.isParameterSupported("temperature", modelInfo, model.id)) {
 				requestBody.temperature = (options.modelOptions?.temperature as number) ?? 0.7;
+			}
+
+			// Add frequency_penalty and presence_penalty to help prevent repetitive loops if supported
+			// We only apply these as defaults if Copilot (options.modelOptions) hasn't already provided them.
+			if (this.isParameterSupported("frequency_penalty", modelInfo, model.id)) {
+				requestBody.frequency_penalty = (options.modelOptions?.frequency_penalty as number) ?? 0.2;
+			}
+			if (this.isParameterSupported("presence_penalty", modelInfo, model.id)) {
+				requestBody.presence_penalty = (options.modelOptions?.presence_penalty as number) ?? 0.1;
 			}
 
 			if (options.modelOptions) {
@@ -277,6 +292,8 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		this._emittedTextToolCallKeys.clear();
 		this._emittedTextToolCallIds.clear();
 		this._partialAssistantText = "";
+		this._lastEmittedText = "";
+		this._repeatCount = 0;
 	}
 
 	private isParameterSupported(param: string, modelInfo: LiteLLMModelInfo | undefined, modelId?: string): boolean {
@@ -367,8 +384,18 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		if (eventType === "response.output_text.delta") {
 			const textDelta = (delta.delta || delta.text || delta.chunk) as string | undefined;
 			if (textDelta) {
-				progress.report(new vscode.LanguageModelTextPart(textDelta));
-				return true;
+				if (textDelta === this._lastEmittedText) {
+					this._repeatCount++;
+				} else {
+					this._lastEmittedText = textDelta;
+					this._repeatCount = 0;
+				}
+
+				if (this._repeatCount < 20) {
+					progress.report(new vscode.LanguageModelTextPart(textDelta));
+					return true;
+				}
+				return false;
 			}
 			return false;
 		}
@@ -571,9 +598,18 @@ export class LiteLLMChatModelProvider implements LanguageModelChatProvider {
 		}
 
 		if (visibleOut) {
-			progress.report(new vscode.LanguageModelTextPart(visibleOut));
-			emittedText = true;
-			emittedAny = true;
+			if (visibleOut === this._lastEmittedText) {
+				this._repeatCount++;
+			} else {
+				this._lastEmittedText = visibleOut;
+				this._repeatCount = 0;
+			}
+
+			if (this._repeatCount < 20) {
+				progress.report(new vscode.LanguageModelTextPart(visibleOut));
+				emittedText = true;
+				emittedAny = true;
+			}
 		}
 
 		this._textToolParserBuffer = data;

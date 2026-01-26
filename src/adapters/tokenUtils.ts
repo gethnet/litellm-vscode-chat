@@ -102,7 +102,7 @@ export function trimMessagesToFitBudget(
 	for (let i = remaining.length - 1; i >= 0; i--) {
 		const msg = remaining[i];
 		const msgTokens = estimateSingleMessageTokens(msg);
-		if (used + msgTokens <= budget) {
+		if (used + msgTokens <= budget || selected.length === (systemMessage ? 1 : 0)) {
 			selected.splice(systemMessage ? 1 : 0, 0, msg);
 			used += msgTokens;
 		} else {

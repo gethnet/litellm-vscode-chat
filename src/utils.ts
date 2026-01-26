@@ -203,7 +203,7 @@ export function convertMessages(messages: readonly vscode.LanguageModelChatReque
 		}
 
 		for (const tr of toolResults) {
-			out.push({ role: "tool", tool_call_id: tr.callId, content: tr.content || "" });
+			out.push({ role: "tool", tool_call_id: tr.callId, content: tr.content || "Success" });
 		}
 
 		const text = textParts.join("");

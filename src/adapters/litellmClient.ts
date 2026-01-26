@@ -228,7 +228,7 @@ export class LiteLLMClient {
 			if (msg.role === "assistant" && msg.tool_calls) {
 				for (const tc of msg.tool_calls) {
 					let normalizedId = tc.id;
-					if (!normalizedId.startsWith("fc_")) {
+					if (normalizedId && !normalizedId.startsWith("fc_")) {
 						normalizedId = `fc_${normalizedId}`;
 					}
 					toolCallIdMap.set(tc.id, normalizedId);
@@ -268,7 +268,8 @@ export class LiteLLMClient {
 			} else if (msg.role === "tool") {
 				const toolCallId = msg.tool_call_id;
 				if (toolCallId) {
-					const normalizedId = toolCallIdMap.get(toolCallId) || toolCallId;
+					const normalizedId =
+						toolCallIdMap.get(toolCallId) || (toolCallId.startsWith("fc_") ? toolCallId : `fc_${toolCallId}`);
 					const toolContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
 					if (addedToolCalls.has(normalizedId)) {
 						inputArray.push({
