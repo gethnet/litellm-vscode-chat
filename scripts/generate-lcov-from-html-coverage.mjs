@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 import { Report } from 'c8';
 import { existsSync, readdirSync } from 'fs';
 import { resolve } from 'path';
