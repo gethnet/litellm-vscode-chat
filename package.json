@@ -70,7 +70,9 @@
 		"lint": "eslint --fix",
 		"format": "prettier --write .",
 		"watch": "tsc -watch -p ./",
-		"test": "npm run compile && xvfb-run vscode-test",
+		"test": "tsc -p ./ && xvfb-run vscode-test",
+		"test:report": "export VSCODE_TEST_RESULTS_DIR=$PWD/test-results && mkdir -p $VSCODE_TEST_RESULTS_DIR && npm run test",
+		"test:coverage": "tsc -p ./ && node -e \"const fs = require('fs'); const path = require('path'); const coveragePath = path.join(process.cwd(), 'coverage'); if (fs.existsSync(coveragePath)) fs.rmSync(coveragePath, { recursive: true, force: true });\" && xvfb-run vscode-test --coverage --coverage-output coverage --coverage-reporter lcovonly --coverage-reporter html --coverage-reporter text-summary",
 		"bump-version": "node scripts/bump-version.js"
 	},
 	"devDependencies": {
@@ -81,12 +83,14 @@
 		"@types/sinon": "^21.0.0",
 		"@types/vscode": "^1.104.0",
 		"@vscode/dts": "^0.4.1",
-		"@vscode/test-cli": "^0.0.11",
+		"@vscode/test-cli": "^0.0.12",
 		"@vscode/test-electron": "^2.5.2",
 		"@vscode/vsce": "^3.7.0",
 		"all-contributors-cli": "^6.26.1",
 		"eslint": "^9.13.0",
+		"mocha-junit-reporter": "^2.2.1",
 		"prettier": "^3.1.0",
+		"rimraf": "^6.0.1",
 		"sinon": "^21.0.1",
 		"typescript": "^5.9.2",
 		"typescript-eslint": "^8.39.0"

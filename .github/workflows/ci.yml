@@ -25,21 +25,39 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install
+        run: npm install --include dev
 
       - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libasound2 libgbm1 libgtk-3-0 libnss3 libxss1
 
-      - name: Check Formatting
-        run: npx prettier --check .
-
       - name: Lint
         run: npm run lint
+
+      - name: Check Formatting
+        run: npm run format
 
       - name: Compile
         run: npm run compile
 
-      - name: Run Tests
-        run: npm run test
+      - name: Run Tests with Coverage
+        run: npm run test:coverage
+
+      - name: Upload Coverage Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            ${{ github.workspace }}/test-results
+            .vscode-test/user-data/logs
+          retention-days: 7

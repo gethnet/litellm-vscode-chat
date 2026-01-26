@@ -20,7 +20,10 @@
 				"github.vscode-github-actions",
 				"christian-kohler.npm-intellisense",
 				"yseop.vscode-yseopml",
-				"redhat.vscode-yaml"
+				"redhat.vscode-yaml",
+				"hbenl.vscode-test-explorer",
+				"ms-vscode.test-adapter-converter",
+				"ryanluker.vscode-coverage-gutters"
 			],
 			"settings": {
 				"editor.formatOnSave": true,
