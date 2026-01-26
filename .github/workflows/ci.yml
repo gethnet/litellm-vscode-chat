@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - geth-dev
+  pull_request:
+    branches:
+      - geth-dev
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/devcontainers/typescript-node:22-trixie
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libasound2 libgbm1 libgtk-3-0 libnss3 libxss1
+
+      - name: Check Formatting
+        run: npx prettier --check .
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Run Tests
+        run: npm run test

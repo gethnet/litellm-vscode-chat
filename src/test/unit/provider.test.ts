@@ -102,4 +102,32 @@ suite("LiteLLM Provider Unit Tests", () => {
 		assert.strictEqual(requestBody.frequency_penalty, undefined);
 		assert.deepStrictEqual(requestBody.stop, ["\n"]);
 	});
+
+	test("stripUnsupportedParametersFromRequest handles o1 models", () => {
+		const provider = new LiteLLMChatModelProvider(mockSecrets, userAgent);
+		const strip = (
+			provider as unknown as {
+				stripUnsupportedParametersFromRequest: (
+					requestBody: Record<string, unknown>,
+					modelInfo: unknown,
+					modelId?: string
+				) => void;
+			}
+		).stripUnsupportedParametersFromRequest.bind(provider);
+
+		const requestBody: Record<string, unknown> = {
+			temperature: 1.0,
+			top_p: 1.0,
+			presence_penalty: 0.0,
+			max_tokens: 1000,
+		};
+
+		// o1 models shouldn't have temperature, top_p, or penalties
+		strip(requestBody, undefined, "o1-mini");
+
+		assert.strictEqual(requestBody.temperature, undefined);
+		assert.strictEqual(requestBody.top_p, undefined);
+		assert.strictEqual(requestBody.presence_penalty, undefined);
+		assert.strictEqual(requestBody.max_tokens, 1000);
+	});
 });

@@ -1,6 +1,6 @@
 {
 	"name": "LiteLLM VSCode Chat Development",
-	"image": "mcr.microsoft.com/devcontainers/typescript-node:20-trixie",
+	"image": "mcr.microsoft.com/devcontainers/typescript-node:22-trixie",
 	"features": {
 		"ghcr.io/devcontainers/features/git:1": {},
 		"ghcr.io/devcontainers/features/github-cli:1": {},
@@ -16,10 +16,11 @@
 			"extensions": [
 				"dbaeumer.vscode-eslint",
 				"esbenp.prettier-vscode",
-				"GitHub.copilot",
 				"GitHub.copilot-chat",
 				"github.vscode-github-actions",
-				"christian-kohler.npm-intellisense"
+				"christian-kohler.npm-intellisense",
+				"yseop.vscode-yseopml",
+				"redhat.vscode-yaml"
 			],
 			"settings": {
 				"editor.formatOnSave": true,

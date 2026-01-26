@@ -1,118 +1,67 @@
-name: Deploy and Release
+name: Release
 
 on:
-  push:
-    branches: [ deploy ]
-
-permissions:
-  contents: write
-  id-token: write
-  pull-requests: write
-  pages: write
-
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
-concurrency:
-  group: "deploy"
-  cancel-in-progress: false
+  pull_request:
+    types: [closed]
+    branches:
+      - main
 
 jobs:
-  package:
+  release:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
+    container:
+      image: mcr.microsoft.com/devcontainers/typescript-node:22-trixie
     steps:
-      - name: Checkout deploy branch
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: deploy
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: npm install
 
-      - name: Compile the extension
-        run: npm run compile
-
-      # Extract version from package.json
-      - name: Get version from package.json
-        id: version
+      - name: Install System Dependencies
         run: |
-          PACKAGE_VERSION=$(cat package.json | grep version | head -1 | awk -F: '{ print $2 }' | sed 's/[",]//g' | tr -d ' ')
-          echo "version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
-          echo "Version from package.json: $PACKAGE_VERSION"
+          sudo apt-get update
+          sudo apt-get install -y xvfb libasound2 libgbm1 libgtk-3-0 libnss3 libxss1
 
-      - name: Package VSIX
-        run: npx @vscode/vsce package -o extension.vsix
+      - name: Lint and Test
+        run: |
+          npm run lint
+          npm run test
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vsix
-          path: extension.vsix
-
-  publish:
-    runs-on: ubuntu-latest
-    needs: [ package ]
-    steps:
-      - name: Checkout deploy branch
-        uses: actions/checkout@v4
-        with:
-          ref: deploy
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: vsix
-          path: .
+      - name: Package Extension
+        run: npx vsce package
 
       - name: Publish to VS Code Marketplace
-        run: npx @vscode/vsce publish --pat ${{ secrets.MARKETPLACE_TOKEN }} --packagePath ./extension.vsix
+        run: npx vsce publish -p ${{ secrets.VS_MARKETPLACE_PUB_TOKEN }}
 
-      - name: Create GitHub Release with VSIX
-        id: create_release
-        uses: softprops/action-gh-release@v1
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.package.outputs.version }}
-          name: LiteLLM Provider for GitHub Copilot Chat v${{ needs.package.outputs.version }}
+          tag_name: rel/${{ github.event.pull_request.title }}
+          files: "*.vsix"
           body: |
-            ## LiteLLM Provider for GitHub Copilot Chat v${{ needs.package.outputs.version }}
+            ${{ github.event.pull_request.body }}
 
-            ### Installation from VSIX
-            1. Download the `extension.vsix` file
-            2. Open VS Code
-            3. Go to Extensions (Ctrl+Shift+X / Cmd+Shift+X)
-            4. Click the "..." menu at the top
-            5. Select "Install from VSIX..."
-            6. Choose the downloaded `extension.vsix` file
-
-            ### Installation from VS Code Marketplace
-            Search for "LiteLLM" in the VS Code Extensions marketplace or visit:
-            https://marketplace.visualstudio.com/items?itemName=vivswan.litellm-vscode-chat
-
-            ### Configuration
+            ---
             After installation, run the "Manage LiteLLM Provider" command to configure:
             - LiteLLM base URL (e.g., `http://localhost:4000` or your LiteLLM proxy URL)
             - LiteLLM API key (if required)
 
-            [Full documentation](https://github.com/Vivswan/litellm-vscode-chat#readme)
-          files: |
-            extension.vsix
+            [Full documentation](https://github.com/gethnet/litellm-vscode-chat#readme)
           draft: false
           prerelease: false
         env:
-          VERSION: ${{ needs.package.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
   bump-version:
-    needs: [ publish ]
+    needs: [ release ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
