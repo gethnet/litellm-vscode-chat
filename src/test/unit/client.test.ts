@@ -39,4 +39,17 @@ suite("LiteLLM Client Unit Tests", () => {
 		const functionOutputs = input.filter((item) => item.type === "function_call_output");
 		assert.strictEqual(functionOutputs.length, 0);
 	});
+
+	test("transformToResponsesFormat uses 'content' with 'role' for messages", () => {
+		const body = client.transformToResponsesFormat({
+			model: "m",
+			messages: [{ role: "user", content: "hello world" }],
+		});
+
+		const input = body.input as Record<string, unknown>[];
+		assert.strictEqual(input[0].type, "message");
+		assert.strictEqual(input[0].role, "user");
+		assert.strictEqual(input[0].content, "hello world");
+		assert.strictEqual((input[0] as Record<string, unknown>).message, undefined);
+	});
 });

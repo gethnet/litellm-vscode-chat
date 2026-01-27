@@ -211,7 +211,7 @@ export function convertMessages(messages: readonly vscode.LanguageModelChatReque
 			if (role === "system" || role === "user" || (role === "assistant" && !emittedAssistantToolCall)) {
 				const messageContent = buildMessageContent(textParts, contentItems);
 				if (messageContent) {
-					out.push({ role, content: messageContent });
+					out.push({ role: role || "user", content: messageContent });
 				}
 			}
 		}
@@ -370,15 +370,17 @@ export function isToolResultPart(value: unknown): value is { callId: string; con
  * @param message The message whose role is mapped.
  */
 function mapRole(message: vscode.LanguageModelChatRequestMessage): Exclude<OpenAIChatRole, "tool"> {
-	const USER = vscode.LanguageModelChatMessageRole.User as unknown as number;
-	const ASSISTANT = vscode.LanguageModelChatMessageRole.Assistant as unknown as number;
-	const r = message.role as unknown as number;
-	if (r === USER) {
+	const role = message.role;
+
+	// Use string comparison if possible, or fall back to numeric comparison
+	if (role === vscode.LanguageModelChatMessageRole.User) {
 		return "user";
 	}
-	if (r === ASSISTANT) {
+	if (role === vscode.LanguageModelChatMessageRole.Assistant) {
 		return "assistant";
 	}
+
+	// Default to system for everything else (including System role)
 	return "system";
 }
 

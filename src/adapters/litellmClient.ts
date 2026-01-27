@@ -245,13 +245,17 @@ export class LiteLLMClient {
 
 			if (msg.role === "user") {
 				if (typeof msg.content === "string") {
-					inputArray.push({ type: "text", text: msg.content });
+					inputArray.push({ type: "message", role: "user", content: msg.content });
 				} else if (Array.isArray(msg.content)) {
-					inputArray.push(...(msg.content as OpenAIChatMessageContentItem[]));
+					for (const item of msg.content) {
+						if (item.type === "text" && item.text) {
+							inputArray.push({ type: "message", role: "user", content: item.text });
+						}
+					}
 				}
 			} else if (msg.role === "assistant") {
 				if (typeof msg.content === "string") {
-					inputArray.push({ type: "text", text: msg.content });
+					inputArray.push({ type: "message", role: "assistant", content: msg.content });
 				}
 				if (msg.tool_calls) {
 					for (const tc of msg.tool_calls) {
