@@ -9,14 +9,17 @@ const packageJsonPath = path.join(__dirname, "..", "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 
 // Get the version bump type from command line args (patch, minor, major, dev)
-const bumpType = process.argv[2] || "patch";
+const args = process.argv.slice(2);
+const isDevRequested = args.includes("dev");
+const bumpType = args.find((arg) => ["patch", "minor", "major"].includes(arg)) || (isDevRequested ? "none" : "patch");
 
-if (!["patch", "minor", "major", "dev"].includes(bumpType)) {
-	console.error("Usage: npm run bump-version [patch|minor|major|dev]");
+if (!["patch", "minor", "major", "none"].includes(bumpType) && !isDevRequested) {
+	console.error("Usage: npm run bump-version [patch|minor|major] [dev]");
 	console.error("  patch: 0.1.0 -> 0.1.1");
 	console.error("  minor: 0.1.0 -> 0.2.0");
 	console.error("  major: 0.1.0 -> 1.0.0");
 	console.error("  dev:   0.1.0 -> 0.1.0-dev (or keeps -dev if present)");
+	console.error("  patch dev: 0.1.0 -> 0.1.1-dev");
 	process.exit(1);
 }
 
@@ -30,32 +33,37 @@ if (!versionMatch) {
 const major = parseInt(versionMatch[1]);
 const minor = parseInt(versionMatch[2]);
 const patch = parseInt(versionMatch[3]);
-const isDev = !!versionMatch[4];
 
 // Calculate new version
-let newVersion;
+let nextMajor = major;
+let nextMinor = minor;
+let nextPatch = patch;
+
 switch (bumpType) {
 	case "major":
-		newVersion = `${major + 1}.0.0`;
+		nextMajor++;
+		nextMinor = 0;
+		nextPatch = 0;
 		break;
 	case "minor":
-		newVersion = `${major}.${minor + 1}.0`;
+		nextMinor++;
+		nextPatch = 0;
 		break;
 	case "patch":
-		newVersion = `${major}.${minor}.${patch + 1}`;
-		break;
-	case "dev":
-		newVersion = isDev ? packageJson.version : `${major}.${minor}.${patch}-dev`;
-		break;
-	default:
-		newVersion = `${major}.${minor}.${patch + 1}`;
+		nextPatch++;
 		break;
 }
 
+let newVersion = `${nextMajor}.${nextMinor}.${nextPatch}`;
+if (isDevRequested) {
+	newVersion += "-dev";
+}
+
 // Update package.json
+const oldVersion = packageJson.version;
 packageJson.version = newVersion;
 fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, "\t") + "\n");
-console.log(`Version bumped: ${packageJson.version} -> ${newVersion}`);
+console.log(`Version bumped: ${oldVersion} -> ${newVersion}`);
 
 // Return the new version for use in scripts
-process.stdout.write(`${packageJson.version} -> ${newVersion}`);
+process.stdout.write(`${oldVersion} -> ${newVersion}`);

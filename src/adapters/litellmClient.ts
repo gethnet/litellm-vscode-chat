@@ -178,15 +178,15 @@ export class LiteLLMClient {
 			return Promise.reject(new Error("Operation cancelled by user"));
 		}
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				disposable?.dispose();
-				resolve();
-			}, ms);
-			const disposable = token?.onCancellationRequested(() => {
+			const registration = token?.onCancellationRequested(() => {
 				clearTimeout(timer);
-				disposable?.dispose();
+				registration?.dispose();
 				reject(new Error("Operation cancelled by user"));
 			});
+			const timer = setTimeout(() => {
+				registration?.dispose();
+				resolve();
+			}, ms);
 		});
 	}
 
@@ -228,7 +228,7 @@ export class LiteLLMClient {
 			if (msg.role === "assistant" && msg.tool_calls) {
 				for (const tc of msg.tool_calls) {
 					let normalizedId = tc.id;
-					if (!normalizedId.startsWith("fc_")) {
+					if (normalizedId && !normalizedId.startsWith("fc_")) {
 						normalizedId = `fc_${normalizedId}`;
 					}
 					toolCallIdMap.set(tc.id, normalizedId);
@@ -245,13 +245,17 @@ export class LiteLLMClient {
 
 			if (msg.role === "user") {
 				if (typeof msg.content === "string") {
-					inputArray.push({ type: "text", text: msg.content });
+					inputArray.push({ type: "message", role: "user", content: msg.content });
 				} else if (Array.isArray(msg.content)) {
-					inputArray.push(...(msg.content as OpenAIChatMessageContentItem[]));
+					for (const item of msg.content) {
+						if (item.type === "text" && item.text) {
+							inputArray.push({ type: "message", role: "user", content: item.text });
+						}
+					}
 				}
 			} else if (msg.role === "assistant") {
 				if (typeof msg.content === "string") {
-					inputArray.push({ type: "text", text: msg.content });
+					inputArray.push({ type: "message", role: "assistant", content: msg.content });
 				}
 				if (msg.tool_calls) {
 					for (const tc of msg.tool_calls) {
@@ -268,7 +272,8 @@ export class LiteLLMClient {
 			} else if (msg.role === "tool") {
 				const toolCallId = msg.tool_call_id;
 				if (toolCallId) {
-					const normalizedId = toolCallIdMap.get(toolCallId) || toolCallId;
+					const normalizedId =
+						toolCallIdMap.get(toolCallId) || (toolCallId.startsWith("fc_") ? toolCallId : `fc_${toolCallId}`);
 					const toolContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
 					if (addedToolCalls.has(normalizedId)) {
 						inputArray.push({

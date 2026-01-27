@@ -1,140 +1,82 @@
 name: Release
 
 on:
-  pull_request:
-    types: [closed]
-    branches:
-      - main
+  push:
+    tags:
+      - 'rel/v*'
+  release:
+    types: [published]
 
 jobs:
-  release:
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+  ci:
+    # Trigger on either a tag push or a release publication
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/rel/v')) ||
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'rel/v'))
+    uses: ./.github/workflows/ci.yml
+
+  create-draft-release:
+    needs: ci
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    container:
-      image: mcr.microsoft.com/devcontainers/typescript-node:22-trixie
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Verify Version Match
+        run: |
+          PACKAGE_VERSION=${{ needs.ci.outputs.version }}
+          TAG_VERSION=${GITHUB_REF#refs/tags/rel/v}
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "Error: Tag version $TAG_VERSION does not match package.json version $PACKAGE_VERSION"
+            exit 1
+          fi
+
+      - name: Download VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.vsix"
+          draft: true
+          prerelease: ${{ contains(needs.ci.outputs.version, '-') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-marketplace:
+    needs: ci
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Install System Dependencies
+      - name: Verify Version Match
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libasound2 libgbm1 libgtk-3-0 libnss3 libxss1
+          PACKAGE_VERSION=${{ needs.ci.outputs.version }}
+          TAG_VERSION=${{ github.event.release.tag_name }}
+          TAG_VERSION=${TAG_VERSION#rel/v}
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "Error: Release tag $TAG_VERSION does not match package.json version $PACKAGE_VERSION"
+            exit 1
+          fi
 
-      - name: Lint and Test
-        run: |
-          npm run lint
-          npm run test
-
-      - name: Package Extension
-        run: npx vsce package
+      - name: Download VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix
 
       - name: Publish to VS Code Marketplace
-        run: npx vsce publish -p ${{ secrets.VS_MARKETPLACE_PUB_TOKEN }}
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: rel/${{ github.event.pull_request.title }}
-          files: "*.vsix"
-          body: |
-            ${{ github.event.pull_request.body }}
-
-            ---
-            After installation, run the "Manage LiteLLM Provider" command to configure:
-            - LiteLLM base URL (e.g., `http://localhost:4000` or your LiteLLM proxy URL)
-            - LiteLLM API key (if required)
-
-            [Full documentation](https://github.com/gethnet/litellm-vscode-chat#readme)
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
-  bump-version:
-    needs: [ release ]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Checkout main branch
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies
-        run: npm install
-
-      # Use bump-version script to calculate next patch version
-      - name: Calculate next version
-        id: next_version
-        run: |
-          BUMPING_VERSION=$(npm run bump-version)
-          NEXT_VERSION=$(echo $BUMPING_VERSION  | sed 's/.*-> //')
-          CURRENT_VERSION=$(echo $BUMPING_VERSION| sed 's/ ->.*//')
-          echo "bumping_version=BUMPING_VERSION" >> $GITHUB_OUTPUT
-          echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
-          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "$BUMPING_VERSION"
-
-      # Create a new branch for the version bump
-      - name: Create version bump branch
-        run: |
-          git checkout -b version-bump-${{ steps.next_version.outputs.next_version }}
-
-      # Configure Git
-      - name: Configure Git
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-
-      # Commit version update
-      - name: Commit version update
-        run: |
-          git add package.json
-          git commit -m "chore: bump version to ${{ steps.next_version.outputs.next_version }}"
-          git push origin version-bump-${{ steps.next_version.outputs.next_version }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check package.json
-        run: |
-          cat package.json
-
-      # Create pull request
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: bump version to ${{ steps.next_version.outputs.next_version }}"
-          branch: main
-          title: "Version Bump to ${{ steps.next_version.outputs.next_version }}"
-          body: |
-            ## Version Bump
-            This PR automatically bumps the version from ${{ steps.next_version.outputs.current_version }} to ${{ steps.next_version.outputs.next_version }} after a successful release.
-
-            This PR was automatically created by the release workflow.
-          labels: |
-            version-bump
-            automated-pr
-          base: version-bump-${{ steps.next_version.outputs.next_version }}
-
-      # Clean up
-      - name: Delete version bump branch
-        run: |
-          git push origin --delete version-bump-${{ steps.next_version.outputs.next_version }}
+        if: |
+          !contains(needs.ci.outputs.version, 'dev') &&
+          !contains(needs.ci.outputs.version, 'test')
+        run: npx vsce publish --packagePath litellm-connector-copilot-${{ needs.ci.outputs.version }}.vsix -p ${{ secrets.VS_MARKETPLACE_PUB_TOKEN }}

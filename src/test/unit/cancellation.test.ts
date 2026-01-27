@@ -64,11 +64,11 @@ suite("LiteLLM Client Cancellation Tests", () => {
 
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const clientAny = client as any;
-		// Use a large delay to ensure we are sleeping when we cancel
-		const retryPromise = clientAny.fetchWithRetry("http://url", {}, { retries: 2, delayMs: 5000, token: cts.token });
+		// Use a small delay for test reliability
+		const retryPromise = clientAny.fetchWithRetry("http://url", {}, { retries: 2, delayMs: 1000, token: cts.token });
 
 		// Wait a bit for the first failure then cancel during sleep
-		await new Promise((r) => setTimeout(r, 200));
+		await new Promise((r) => setTimeout(r, 100));
 		cts.cancel();
 
 		try {
