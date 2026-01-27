@@ -17,6 +17,9 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/devcontainers/typescript-node:22-trixie
+
     outputs:
       version: ${{ steps.package_info.outputs.version }}
     steps:
@@ -29,12 +32,12 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install
+        run: npm install --include dev
 
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgbm1 libgtk-3-0 libnss3 libxss1
+          sudo apt-get install -y xvfb libasound2 libgbm1 libgtk-3-0 libnss3 libxss1
 
       - name: Lint
         run: npm run lint
