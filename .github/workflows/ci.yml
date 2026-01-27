@@ -3,18 +3,22 @@ name: CI
 on:
   push:
     branches:
-      - geth-dev
+      - geth_dev
   pull_request:
     branches:
-      - geth-dev
+      - geth_dev
       - main
+  workflow_call:
+    outputs:
+      version:
+        description: "The version of the extension"
+        value: ${{ jobs.build-and-test.outputs.version }}
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    container:
-      image: mcr.microsoft.com/devcontainers/typescript-node:22-trixie
-
+    outputs:
+      version: ${{ steps.package_info.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -23,9 +27,10 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
+          cache: 'npm'
 
       - name: Install Dependencies
-        run: npm install --include dev
+        run: npm ci
 
       - name: Install System Dependencies
         run: |
@@ -42,7 +47,23 @@ jobs:
         run: npm run compile
 
       - name: Run Tests with Coverage
-        run: npm run test:coverage
+        run: xvfb-run npm run test:coverage
+
+      - name: Get Package Info
+        id: package_info
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Package Extension
+        run: npx vsce package
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: litellm-connector-copilot-${{ steps.package_info.outputs.version }}.vsix
+          retention-days: 7
 
       - name: Upload Coverage Results
         if: always()
