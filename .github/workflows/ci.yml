@@ -49,7 +49,7 @@ jobs:
         run: npm run compile
 
       - name: Run Tests with Coverage
-        run: xvfb-run npm run test:coverage
+        run: npm run test:coverage
 
       - name: Get Package Info
         id: package_info
