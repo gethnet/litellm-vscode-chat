@@ -178,11 +178,12 @@ export class LiteLLMClient {
 			return Promise.reject(new Error("Operation cancelled by user"));
 		}
 		return new Promise((resolve, reject) => {
+			let disposable: vscode.Disposable | undefined;
 			const timer = setTimeout(() => {
 				disposable?.dispose();
 				resolve();
 			}, ms);
-			const disposable = token?.onCancellationRequested(() => {
+			disposable = token?.onCancellationRequested(() => {
 				clearTimeout(timer);
 				disposable?.dispose();
 				reject(new Error("Operation cancelled by user"));
