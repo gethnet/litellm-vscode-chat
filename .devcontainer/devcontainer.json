@@ -23,7 +23,8 @@
 				"redhat.vscode-yaml",
 				"hbenl.vscode-test-explorer",
 				"ms-vscode.test-adapter-converter",
-				"ryanluker.vscode-coverage-gutters"
+				"ryanluker.vscode-coverage-gutters",
+				"GitHub.vscode-pull-request-github"
 			],
 			"settings": {
 				"editor.formatOnSave": true,
